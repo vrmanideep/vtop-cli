@@ -38,7 +38,6 @@ Line 2: Your VTOP Password
 24BCAxxxx
 password
 ```
-### ⚠️ Security Note: Never share your credentials.txt or commit it to GitHub. It is already added to .gitignore by default.
 
 ### 🖥️ Usage
 Simply run the main script to start the interactive dashboard:
