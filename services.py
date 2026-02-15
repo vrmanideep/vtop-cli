@@ -701,8 +701,12 @@ async def fetchCourseClasses(client, semester_id, generic_class_id):
 async def fetchCoursePage(client, semester_id, class_id, erp_id):
     """
     STEP 3: Fetches the actual Course Materials page.
-    Payload updated to exactly match the provided curl.
+    Upgraded to catch multiple Reference Materials and Web Links per lecture.
     """
+    import time
+    import re
+    from bs4 import BeautifulSoup
+    
     url = "https://vtop.vitap.ac.in/vtop/processViewStudentCourseDetail"
     
     token = getattr(client, "csrf_token", "")
@@ -763,6 +767,7 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
 
             first_col_text = cols[0].get_text(strip=True)
 
+            # Parse General Materials (Syllabus, etc.)
             if "Syllabus" in first_col_text or "Reference Material" in first_col_text:
                 if len(cols) >= 2:
                     link = get_link(cols[1])
@@ -771,19 +776,49 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
                         if not file_name: file_name = first_col_text
                         data["general"].append({"title": file_name, "download_path": link})
 
+            # Parse Specific Lectures
             elif first_col_text.isdigit() and len(cols) >= 5:
                 s_no = int(first_col_text)
                 raw_date = cols[1].get_text(strip=True)
                 date_match = re.search(r"\[(.*?)\]", raw_date)
                 clean_date = date_match.group(1) if date_match else raw_date.split('[')[0]
 
-                link = get_link(cols[4])
+                topic = cols[3].get_text(strip=True)
+                
+                main_path = None
+                ref_paths = []
+                web_links = []
+
+                # Sweep all links in the materials column (index 4)
+                for a in cols[4].find_all('a'):
+                    href = a.get('href', '')
+                    link_text = a.get_text(strip=True).upper()
+                    
+                    # Catch VTOP Download Links
+                    if 'javascript:vtopDownload' in href:
+                        match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", href)
+                        if match:
+                            path = match.group(1)
+                            # Check if explicitly labeled as Reference
+                            if "REFERENCE" in link_text or "REF" in link_text:
+                                ref_paths.append(path)
+                            elif not main_path:
+                                main_path = path # Treat first non-reference as Main
+                            else:
+                                ref_paths.append(path) # Fallback
+                                
+                    # Catch Web URLs (YouTube, Articles, etc.)
+                    elif href.startswith('http'):
+                        web_links.append(href)
+
                 data["lectures"].append({
                     "s_no": s_no,
                     "date": clean_date,
                     "day": cols[2].get_text(strip=True),
-                    "topic": cols[3].get_text(strip=True),
-                    "download_path": link
+                    "topic": topic,
+                    "download_path": main_path,
+                    "ref_paths": ref_paths,
+                    "web_links": web_links
                 })
 
         return data
