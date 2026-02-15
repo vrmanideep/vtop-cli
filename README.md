@@ -1,4 +1,4 @@
-# VIT-AP VTOP CLI Dashboard 🎓
+ # VIT-AP VTOP CLI Dashboard 🎓
 
 A fast, asynchronous command-line interface for the VIT-AP Student Portal (VTOP). Access your attendance, timetable, marks, and course materials directly from your terminal or mobile device.
 
@@ -6,7 +6,6 @@ A fast, asynchronous command-line interface for the VIT-AP Student Portal (VTOP)
 
 * **⚡ Fast & Async:** Built with `httpx` and `asyncio` for rapid data fetching.
 * **📊 Rich UI:** Beautiful tables and colored output using the `rich` library.
-* **📱 Mobile Ready:** Fully supported on Android via Termux.
 * **📥 Material Downloader:** Download lecture slides and reference materials directly to your device.
 * **📅 Schedules:** View today's classes and full semester timetable.
 * **📝 Academic Data:** Check attendance history, internal marks, exam schedules, and grade history.
@@ -20,6 +19,7 @@ cd vtop
 ```
 Or Download and extract the zip file
 ```bash
+(Note: Clicking this link will start downloading the .zip folder)
 https://github.com/vrmanideep/vtop/archive/refs/heads/main.zip
 cd vtop-main
 ```
@@ -55,7 +55,9 @@ python vtop.py
 7. **Exam Schedule:** Upcoming exam dates and seat locations.
 8. **Change Semester:** Switch context to view previous semester data.
 9. **Academic Credits:** View credit distribution (Earned vs Required).
-10. Course Page: Under developement
+10. **Course Page:** View and download lecture notes.
+11. **General Outing:** Apply for General Outing and View/ download outpass.
+12. **Weekend Outing:** View/ download outpass.
 
 ### ⚠️ Disclaimer
 This is an unofficial client for the VIT-AP VTOP portal. It is developed for educational purposes and personal use.
