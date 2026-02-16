@@ -5,10 +5,10 @@ A fast, asynchronous command-line interface for the VIT-AP Student Portal (VTOP)
 ## 🚀 Features
 
 * **⚡ Fast & Async:** Built with `httpx` and `asyncio` for rapid data fetching.
-* **📊 Rich UI:** Beautiful tables and colored output using the `rich` library.
+* **📊 Rich UI:** Neatly designed tables using the `rich` library.
 * **📥 Material Downloader:** Download lecture slides and reference materials directly to your device.
 * **📅 Schedules:** View today's classes and full semester timetable.
-* **📝 Academic Data:** Check attendance history, internal marks, exam schedules, and grade history.
+* **📝 Academic Data:** Check attendance history, course page, internal marks, exam schedules, and grade history.
 
 ## 🛠️ Installation
 
@@ -18,9 +18,8 @@ git clone [https://github.com/vrmanideep/vtop.git](https://github.com/vrmanideep
 cd vtop
 ```
 Or Download and extract the zip file
+**(Note: Clicking this link will start downloading the .zip folder)**
 ```bash
-(Note: Clicking this link will start downloading the .zip folder)
-
 https://github.com/vrmanideep/vtop/archive/refs/heads/main.zip
 cd vtop-main
 ```
@@ -29,11 +28,11 @@ cd vtop-main
 pip install -r requirements.txt
 ```
 ### 3. 🔑 Configuration
-To log in automatically, create a file named credentials.txt in the root directory.
+To log in automatically, edit the file named credentials.txt in the root directory. Create one if it does not exist. Make sure the name is `credentials.txt`
 
 Format:
-Line 1: Your Registration Number (e.g., 24BCExxxx)
-Line 2: Your VTOP Password
+* Line 1: Your Registration Number (e.g., 24BCExxxx)
+* Line 2: Your VTOP Password
 
 ```PlainText
 24BCAxxxx
@@ -61,5 +60,3 @@ python vtop.py
 
 ### ⚠️ Disclaimer
 This is an unofficial client for the VIT-AP VTOP portal. It is developed for educational purposes and personal use.
-The tool uses SSL verification bypassing (verify=False) to communicate with the VTOP server.
-Use responsibly and ensure your credentials are kept secure locally.
