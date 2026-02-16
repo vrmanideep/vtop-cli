@@ -9,10 +9,6 @@ from typing import List, Dict, Any, Tuple
 from bs4 import BeautifulSoup
 from vitap_vtop_client.client import VtopClient
 
-# ==========================================
-# 0. SETUP & CREDENTIALS
-# ==========================================
-
 def get_cred(file_path="credentials.txt"):
     """
     Reads username from line 1 and password from line 2.
@@ -45,10 +41,6 @@ def _patched_init(self, *args, **kwargs):
     kwargs['verify'] = False
     _original_init(self, *args, **kwargs)
 httpx.AsyncClient.__init__ = _patched_init
-
-# ==========================================
-# 1. CORE SERVICES
-# ==========================================
 
 async def vtopClientLogin(client: VtopClient) -> bool:
     try:

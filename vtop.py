@@ -38,11 +38,6 @@ from services import (
     download_w_outpass
 )
 
-# ==========================================
-#  HELPER FUNCTIONS
-# ==========================================
-
-# Wrapper for downloading course materials (uses same logic as gate pass)
 async def download_material(client, url_suffix, filename):
     return await download_gate_pass(client, url_suffix, filename)
 
@@ -98,8 +93,7 @@ def print_today_schedule(data):
     if not data:
         print("   (No timetable data available)")
         return
-    
-    # [FIX] Use dt.now() directly
+
     current_day_upper = dt.now().strftime("%A").upper() 
     current_day_title = dt.now().strftime("%A").title()
     
@@ -153,7 +147,7 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                 if history:
                     def parse_date(x):
                         try: 
-                            # [FIX] Use dt.strptime directly
+                            
                             return dt.strptime(x['date'], "%d-%b-%Y")
                         except: 
                             try: return dt.strptime(x['date'], "%d-%m-%Y")
@@ -215,7 +209,6 @@ def print_marks(data):
     courses = data["courses"]
     courses.sort(key=lambda x: x.get('course_code', ''))
     
-    # Adjusted widths to fit Weightage cleanly within ~105 characters
     print(f"\n   {'CODE':<10} {'COURSE TITLE':<30} {'MARK TITLE':<30} {'SCORE':<8} {'MAX':<6} {'WGT%':<6} {'WGT MRK'}")
     print("   " + "━" * 105)
     
@@ -390,9 +383,8 @@ def print_course_page_table(data):
             s_no = lec['s_no']
             date = lec['date']
             day = lec['day']
-            topic = lec['topic'][:98] # Trims cleanly right before the 60 char limit
+            topic = lec['topic'][:98]
             
-            # Asset Tracker
             assets = []
             if lec.get('download_path'): assets.append("Main")
             if lec.get('ref_paths'): assets.append(f"{len(lec['ref_paths'])} Refs")
@@ -510,7 +502,7 @@ def printWeekendOuting(history):
         )
 
     print("   " + "─" * 95)
-#  MAIN CLI LOGIC
+    
 async def main():
     reg_no, password = get_credentials("credentials.txt")
     print(f"[-] Connecting to V-TOP as {reg_no}...")
@@ -532,7 +524,7 @@ async def main():
         print(f"\n{'='*55}")
         print(f" SUCCESS  : Logged in as {student_name}")
         print(f" REG NO   : {reg_no}")
-        print(f" CURR SEM : {current_sem_name}")
+        print(f" CURRENT SEM : {current_sem_name}")
         print(f"{'='*55}")
 
         while True:
@@ -647,9 +639,6 @@ async def main():
                 print_credits(c_data)
 
             elif choice == '10': 
-                # Move imports to the very top of the block to prevent UnboundLocalError
-                import os, glob, re
-                
                 if not target_sem:
                     print("[!] No semester selected. Use option 8.")
                     continue
@@ -689,13 +678,11 @@ async def main():
 
                             selected_class = None
                             
-                            # If only 1 class variant (like Theory only), auto-select it.
                             if len(classes) == 1:
                                 selected_class = classes[0]
                                 fac_clean = re.sub(r'^\d+\s*-\s*', '', selected_class['faculty'])
                                 print(f"   [+] Auto-selected: SLOT: {selected_class['slot']} | FAC: {fac_clean}")
                             else:
-                                # If multiple (e.g., Theory + Lab), ask user to pick
                                 print(f"\n   SELECT COMPONENT FOR {selected_code}:")
                                 print(f"   {'#':<4} {'SLOT':<17} {'FACULTY NAME'}")
                                 print("   " + "-" * 60)
@@ -704,7 +691,7 @@ async def main():
                                 for i, cls in enumerate(classes):
                                     # Group by Slot for visual clarity
                                     if cls['slot'] != current_slot:
-                                        if current_slot != "": print("") # Spacer
+                                        if current_slot != "": print("")
                                         print(f"   🔹 [{cls['slot']}]")
                                         current_slot = cls['slot']
 
@@ -730,7 +717,6 @@ async def main():
                                     print("   [!] Please enter a number.")
                                     continue
 
-                            # Check for missing Faculty ID
                             if not selected_class['erp_id']:
                                 print(f"\n   [!] Faculty ID could not be scraped for {selected_code}.")
                                 manual_id = input(f"   Enter Faculty ID (erpId) manually: ").strip()
@@ -975,9 +961,7 @@ async def main():
                                         download_folder = os.path.join(home, "Downloads")
                                         clean_date = item['out_date'].replace(" ", "-")
                                         filename = f"general_outing_{clean_date}.pdf"
-                                        
                                         full_path = os.path.join(download_folder, filename)
-                                        
                                         res, msg = await download_g_outpass(client, item['download_url'], full_path)
                                         
                                         if res: 
