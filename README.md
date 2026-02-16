@@ -60,3 +60,9 @@ python vtop.py
 
 ### ⚠️ Disclaimer
 This is an unofficial client for the VIT-AP VTOP portal. It is developed for educational purposes and personal use.
+
+### Credits
+
+```PlainText
+https://github.com/Udhay-Adithya/vitap-vtop-client
+```
