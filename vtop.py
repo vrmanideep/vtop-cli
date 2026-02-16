@@ -334,6 +334,34 @@ def print_exam_schedule(data):
 
     print("   " + "─" * 182)
 
+def print_credits(data):
+    if not data:
+        print("   (No credit details found)")
+        return
+    print(f"\n   {'CATEGORY':<25} {'EARNED':<8} {'TOTAL':<8} {'PROGRESS'}")
+    print("   " + "─" * 65)
+    total_earned = 0
+    total_required = 0
+    for item in data:
+        cat = item['category']
+        earned = item['earned']
+        total = item['total']
+        pct = item['percent']
+        if "Total" in cat: continue
+        total_earned += earned
+        total_required += total
+        bar_len = 15
+        filled = int((pct / 100) * bar_len)
+        bar = "█" * filled + "░" * (bar_len - filled)
+        print(f"   {cat:<25} {earned:<8.1f} {total:<8.0f} {bar} {int(pct)}%")
+    print("   " + "─" * 65)
+    tot_pct = (total_earned / total_required * 100) if total_required > 0 else 0
+    bar_len = 15
+    filled = int((tot_pct / 100) * bar_len)
+    bar = "█" * filled + "░" * (bar_len - filled)
+    print(f"   {'TOTAL CREDITS':<25} {total_earned:<8.1f} {total_required:<8.0f} {bar} {int(tot_pct)}%")
+    print("   " + "─" * 65)
+
 def print_course_page_table(data):
     if not data:
         print("\n   [!] No data received from Course Page.")
@@ -355,15 +383,14 @@ def print_course_page_table(data):
 
     if data.get("lectures"):
         found = True
-        # Widened TOPIC column to 60 characters
-        print(f"\n   {'S.NO':<5} {'DATE':<12} {'DAY':<5} {'TOPIC':<60} {'MATERIALS'}")
-        print("   " + "─" * 105)
+        print(f"\n   {'S.NO':<5} {'DATE':<12} {'DAY':<5} {'TOPIC':<100} {'MATERIALS'}")
+        print("   " + "─" * 145)
         
         for lec in data["lectures"]:
             s_no = lec['s_no']
             date = lec['date']
             day = lec['day']
-            topic = lec['topic'][:58] # Trims cleanly right before the 60 char limit
+            topic = lec['topic'][:98] # Trims cleanly right before the 60 char limit
             
             # Asset Tracker
             assets = []
@@ -373,9 +400,9 @@ def print_course_page_table(data):
             
             mat = ", ".join(assets) if assets else "-"
             
-            print(f"   {s_no:<5} {date:<12} {day:<5} {topic:<60} {mat}")
+            print(f"   {s_no:<5} {date:<12} {day:<5} {topic:<100} {mat}")
             
-        print("   " + "─" * 105)
+        print("   " + "─" * 145)
     
     if not found:
         print("\n   (No course data found. Check if the course page loaded correctly.)")
