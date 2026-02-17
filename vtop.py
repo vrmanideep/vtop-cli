@@ -480,15 +480,16 @@ def printWeekendOuting(history):
 
     for idx, h in enumerate(history):
         status_lower = h['status'].lower()
+        
+        # Cleanly map to the 3 exact VTOP states
         if "accepted" in status_lower or "approved" in status_lower:
             stat_display = "🟢 Approved"
         elif "rejected" in status_lower:
             stat_display = "🔴 Rejected"
-        elif "warden" in status_lower and "waiting" in status_lower:
+        elif "wait" in status_lower or "warden" in status_lower:
             stat_display = "🟡 Wait: Warden"
-        elif "pending" in status_lower:
-            stat_display = "🟡 Pending"
         else:
+            # Fallback just in case VTOP changes their backend strings
             stat_display = "⚪ " + h['status'][:15]
 
         def trunc(text, length):
@@ -547,7 +548,7 @@ async def main():
             print("  0. Exit")
             
             
-            choice = input(f"\n[{reg_no}] Enter choice (0-12): ").strip()
+            choice = input(f"\n[{reg_no}] Enter choice (0-13): ").strip()
 
             if choice == '0':
                 print("Logging out... Goodbye!")
@@ -1077,43 +1078,71 @@ async def main():
                             print("   [!] You can only apply from Tuesday 12:00 AM to Friday 11:59 PM.")
                             input("   Press Enter to return...")
                             continue
-
+                        
                         print("\n   --- NEW WEEKEND OUTING ---")
-                        print("   [Enter '0' to Cancel]")
+                        print("   [Enter '0' to Cancel at any time]")
                         
                         try:
-                            place = input("\n   Place of Visit : ").strip()
-                            if place == '0': continue
+                            # 1. Strict Place Selection
+                            places = ["Vijayawada", "Guntur", "Tenali", "Eluru", "Others"]
+                            print("\n   Select Place of Visit:")
+                            for i, p in enumerate(places):
+                                print(f"   {i+1}. {p}")
+                            p_idx = input("   Choice: ").strip()
+                            if p_idx == '0': continue
+                            place = places[int(p_idx) - 1]
                             
-                            purpose = input("   Purpose        : ").strip()
+                            # 2. Purpose
+                            purpose = input("\n   Purpose (Max 20 chars): ").strip()
                             if purpose == '0': continue
                             
-                            print("   (Format: DD-MMM-YYYY, e.g., 14-Feb-2026)")
-                            out_d = input("   Date           : ").strip()
+                            # 3. Date
+                            print("\n   (Format: DD-MMM-YYYY, e.g., 22-Feb-2026)")
+                            print("   *Note: Must be within the next 6 days.")
+                            out_d = input("   Date: ").strip()
                             if out_d == '0': continue
                             
-                            print("   (Format: HH:MM, 24-hour)")
-                            out_t = input("   Time           : ").strip()
-                            if out_t == '0': continue
+                            # 4. Strict Time Selection
+                            times = [
+                                "9:30 AM- 3:30PM", 
+                                "10:30 AM- 4:30PM", 
+                                "11:30 AM- 5:30PM", 
+                                "12:30 PM- 6:30PM"
+                            ]
+                            print("\n   Select Outing Time:")
+                            for i, t in enumerate(times):
+                                print(f"   {i+1}. {t}")
+                            t_idx = input("   Choice: ").strip()
+                            if t_idx == '0': continue
+                            out_t = times[int(t_idx) - 1]
                             
-                            contact = input("   Contact No     : ").strip()
+                            # 5. Strict Contact Validation
+                            import re
+                            while True:
+                                contact = input("\n   Contact No (10 digits, starts with 7-9): ").strip()
+                                if contact == '0': break
+                                if re.match(r"^[7-9]\d{9}$", contact):
+                                    break
+                                else:
+                                    print("   [!] Invalid format. Try again.")
                             if contact == '0': continue
                             
-                            confirm = input("\n   Submit this request? (y/n): ").lower()
+                            confirm = input(f"\n   Submit request for {place} on {out_d}? (y/n): ").lower()
                             if confirm == 'y':
-                                print("\n   [.] Submitting...")
+                                print("\n   [.] Submitting payload...")
                                 success, msg = await submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact)
                                 if success: 
                                     print(f"   ✅ SUCCESS: {msg}")
-                                    # Refresh data so the new request shows up in history immediately
                                     data = await fetchWeekendOuting(client)
                                     history = data.get('history', [])
-                                else:       
+                                else: 
                                     print(f"   ❌ FAILED: {msg}")
-                            else:
+                            else: 
                                 print("   [x] Cancelled.")
                                 
-                        except Exception as e:
+                        except (ValueError, IndexError): 
+                            print("   [!] Invalid selection. Please enter the correct number.")
+                        except Exception as e: 
                             print(f"   [!] Error: {e}")
 
                     elif sub == '2':

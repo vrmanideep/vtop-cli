@@ -55,8 +55,8 @@ python vtop.py
 8. **Change Semester:** Switch context to view previous semester data.
 9. **Academic Credits:** View credit distribution (Earned vs Required).
 10. **Course Page:** View and download lecture notes.
-11. **General Outing:** Apply for General Outing and View/ download outpass.
-12. **Weekend Outing:** View/download outpass.
+11. **General Outing:** Apply for General Outing and View/download outpass.
+12. **Weekend Outing:** Apply for Weekend Outing and View/download outpass.
 13. **Digital Assignments:** View/download question paper and solutions. Cannot upload solution to V-TOP.
 
 ### ⚠️ Disclaimer

@@ -1190,26 +1190,62 @@ async def deleteWeekendOuting(client, booking_id):
     except Exception as e: return False, str(e)
 
 async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact):
-    """Submits the Weekend outing form."""
+    from bs4 import BeautifulSoup
     import time
-    url = "https://vtop.vitap.ac.in/vtop/hostel/saveOutingForm"
-    payload = {
-        "authorizedID": getattr(client, "username", ""),
-        "_csrf": getattr(client, "csrf_token", ""),
-        "placeOfVisit": place,
-        "purposeOfVisit": purpose,
-        "outingDate": out_d,
-        "outTime": out_t,
-        "contactNumber": contact,
-        "x": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
-    }
-    headers = {"X-Requested-With": "XMLHttpRequest", "Referer": "https://vtop.vitap.ac.in/vtop/hostel/StudentWeekendOuting"}
+    
+    submit_url = "https://vtop.vitap.ac.in/vtop/hostel/saveOutingForm"
+    
     try:
-        res = await client._client.post(url, data=payload, headers=headers)
-        if "error" in res.text.lower() or res.status_code != 200:
-            return False, "Failed or Duplicate Request."
-        return True, "Weekend Outing Applied Successfully."
-    except Exception as e: return False, str(e)
+        # 1. The exact headers from your browser
+        headers = {
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": "https://vtop.vitap.ac.in",
+            "Referer": "https://vtop.vitap.ac.in/vtop/content?",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        # 2. BYPASSING THE FORM: Injecting the exact data from your curl command
+        multipart_payload = {
+            "authorizedID": (None, "24BCE7058"),
+            "BookingId": (None, ""), 
+            "regNo": (None, "24BCE7058"),
+            "name": (None, "PHANIHARAM VENKATA RAMANUJA MANIDEEP"),
+            "applicationNo": (None, "2024028731"),
+            "gender": (None, "MALE"),
+            "hostelBlock": (None, "MH-2"),
+            "roomNo": (None, "204"),
+            "outPlace": (None, place),
+            "purposeOfVisit": (None, purpose),
+            "outingDate": (None, out_d),
+            "outTime": (None, out_t),
+            "contactNumber": (None, contact),
+            "parentContactNumber": (None, "8096999391"),
+            "_csrf": (None, getattr(client, "csrf_token", "")),
+            "x=": (None, time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime()))
+        }
+            
+        # 3. Fire the direct submission
+        print("   [.] Sending Direct Payload...")
+        res_submit = await client._client.post(submit_url, files=multipart_payload, headers=headers)
+        submit_soup = BeautifulSoup(res_submit.text, 'html.parser')
+        
+        # 4. Check results
+        success_msg = submit_soup.find('input', {'id': 'success'})
+        error_msg = submit_soup.find('input', {'id': 'jsonBom'})
+        
+        if error_msg and error_msg.get('value'):
+            return False, error_msg['value']
+            
+        if success_msg and success_msg.get('value'):
+            return True, success_msg['value']
+            
+        if "Outing Request Accepted" in res_submit.text or "Successfully" in res_submit.text:
+            return True, "Weekend Outing Applied Successfully."
+            
+        return False, "Failed. Server did not return a success message."
+        
+    except Exception as e:
+        return False, f"Submission Error: {str(e)}"
 
 async def download_w_outpass(client, url_suffix, folder_path, base_filename):
 
