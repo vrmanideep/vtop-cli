@@ -1224,12 +1224,10 @@ async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contac
             "x=": (None, time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime()))
         }
             
-        # 3. Fire the direct submission
         print("   [.] Sending Direct Payload...")
         res_submit = await client._client.post(submit_url, files=multipart_payload, headers=headers)
         submit_soup = BeautifulSoup(res_submit.text, 'html.parser')
         
-        # 4. Check results
         success_msg = submit_soup.find('input', {'id': 'success'})
         error_msg = submit_soup.find('input', {'id': 'jsonBom'})
         

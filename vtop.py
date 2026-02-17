@@ -530,6 +530,7 @@ async def main():
         print(f" CURRENT SEM : {current_sem_name}")
         print(f"{'='*55}")
 
+
         while True:
             print("\nAVAILABLE OPTIONS:")
             print("  1. View Profile & Proctor Details")

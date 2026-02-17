@@ -44,6 +44,7 @@ Simply run the main script to start the interactive dashboard:
 ```python
 python vtop.py
 ```
+
 ### Menu Options:
 1. **Profile:** View personal and proctor details.
 2. **Transcript:** View complete grade history and CGPA.
