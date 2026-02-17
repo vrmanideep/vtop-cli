@@ -209,34 +209,34 @@ def print_marks(data):
     courses = data["courses"]
     courses.sort(key=lambda x: x.get('course_code', ''))
     
-    print(f"\n   {'CODE':<10} {'COURSE TITLE':<30} {'MARK TITLE':<30} {'SCORE':<8} {'MAX':<6} {'WGT%':<6} {'WGT MRK'}")
-    print("   " + "━" * 105)
+    print(f"\n   {'CODE':<10} {'COURSE TITLE':<60} {'MARK TITLE':<40} {'SCORE':<8} {'MAX':<6} {'WGT%':<6} {'WGT MRK'}")
+    print("   " + "━" * 145)
     
     for course in courses:
         code = course.get('course_code', '-')
-        title = course.get('course_title', '-')[:28] # Truncated to fit
+        title = course.get('course_title', '-')[:58]
         details = course.get('details', [])
         
         if not details:
-             print(f"   {code:<10} {title:<30} {'-':<30} {'-':<8} {'-':<6} {'-':<6} {'-'}")
-             print("   " + "-" * 105)
+             print(f"   {code:<10} {title:<60} {'-':<40} {'-':<8} {'-':<6} {'-':<6} {'-'}")
+             print("   " + "-" * 145)
              continue
              
         first_line = True
         for mark in details:
-            m_title = mark.get('mark_title', '-')[:28] 
+            m_title = mark.get('mark_title', '-')[:38] 
             score   = str(mark.get('scored_mark', '-'))
             max_m   = str(mark.get('max_mark', '-'))
             w_pct   = str(mark.get('weightage_pct', '-'))
             w_mrk   = str(mark.get('weightage_mark', '-'))
             
             if first_line:
-                print(f"   {code:<10} {title:<30} {m_title:<30} {score:<8} {max_m:<6} {w_pct:<6} {w_mrk}")
+                print(f"   {code:<10} {title:<60} {m_title:<40} {score:<8} {max_m:<6} {w_pct:<6} {w_mrk}")
                 first_line = False
             else:
-                print(f"   {'':<10} {'':<30} {m_title:<30} {score:<8} {max_m:<6} {w_pct:<6} {w_mrk}")
+                print(f"   {'':<10} {'':<60} {m_title:<40} {score:<8} {max_m:<6} {w_pct:<6} {w_mrk}")
                 
-        print("   " + "-" * 105)
+        print("   " + "-" * 145)
 
 def print_timetable(data):
     if not data:
@@ -1157,7 +1157,6 @@ async def main():
                                 if 0 <= idx < len(history):
                                     selected_outing = history[idx]
                                     if selected_outing['download_link']:
-                                        import os
                                         save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
                                         fname = f"Outpass_{selected_outing['out_date']}_{selected_outing['place']}"
                                         
