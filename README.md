@@ -31,8 +31,8 @@ pip install -r requirements.txt
 To log in automatically, edit the file named credentials.txt in the root directory. Create one if it does not exist. Make sure the name is `credentials.txt`
 
 Format:
-* Line 1: Your Registration Number (e.g., 24BCExxxx)
-* Line 2: Your VTOP Password
+* **Line 1:** Your Registration Number (e.g., 24BCExxxx)
+* **Line 2:** Your VTOP Password
 
 ```PlainText
 24BCAxxxx
@@ -56,7 +56,8 @@ python vtop.py
 9. **Academic Credits:** View credit distribution (Earned vs Required).
 10. **Course Page:** View and download lecture notes.
 11. **General Outing:** Apply for General Outing and View/ download outpass.
-12. **Weekend Outing:** View/ download outpass.
+12. **Weekend Outing:** View/download outpass.
+13. **Digital Assignments:** View/download question paper and solutions. Cannot upload solution to V-TOP.
 
 ### ⚠️ Disclaimer
 This is an unofficial client for the VIT-AP VTOP portal. It is developed for educational purposes and personal use.

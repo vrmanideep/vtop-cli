@@ -35,7 +35,9 @@ from services import (
     fetchWeekendOuting,
     submitWeekendOuting,
     deleteWeekendOuting,
-    download_w_outpass
+    download_w_outpass,
+    fetchDACourseList,
+    fetchDADetails
 )
 
 async def download_material(client, url_suffix, filename):
@@ -541,6 +543,7 @@ async def main():
             print("  10. View Course Page (Lecture Plan & Materials)")
             print("  11. General Outing")
             print("  12. Weekend Outing")
+            print("  13. Digital Assignments")
             print("  0. Exit")
             
             
@@ -1173,6 +1176,104 @@ async def main():
                                         print("   [!] Outpass is not available for this request yet.")
                                 else:
                                     print("   [!] Invalid Row Number.")
+
+            elif choice == '13':
+                from services import fetchDACourseList, fetchDADetails
+                
+                if not target_sem:
+                    print("[!] No semester selected. Use option 8.")
+                    continue
+                    
+                print(f"   [.] Fetching Digital Assignment Courses...")
+                da_courses = await fetchDACourseList(client, target_sem)
+                
+                if not da_courses:
+                    print("   [!] No digital assignments found for this semester.")
+                    continue
+                    
+                # --- OUTER LOOP: Course Selection ---
+                while True:
+                    print_header("DIGITAL ASSIGNMENTS")
+                    print(f"   {'#':<3} {'CODE':<10} {'COURSE TITLE':<45} {'FACULTY'}")
+                    print("   " + "─" * 90)
+                    for i, c in enumerate(da_courses):
+                        print(f"   {i+1:<3} {c['code']:<10} {c['title'][:43]:<45} {c['faculty'][:25]}")
+                    print("   " + "─" * 90)
+                    print("   0. Back to Main Menu")
+                    
+                    c_sel = input("\n   Select course number: ").strip()
+                    if c_sel == '0': break
+                    
+                    try:
+                        idx = int(c_sel) - 1
+                        if 0 <= idx < len(da_courses):
+                            selected_course = da_courses[idx]
+                            print(f"\n   [.] Fetching assignments for {selected_course['code']}...")
+                            assignments = await fetchDADetails(client, selected_course['class_id'])
+                            
+                            if not assignments:
+                                print(f"   [!] No assignments posted yet for {selected_course['code']}.")
+                                input("\n   Press Enter to continue...")
+                                continue
+                                
+                            # --- INNER LOOP: Assignment Downloads ---
+                            while True:
+                                print(f"\n   ASSIGNMENTS: {selected_course['code']} - {selected_course['title']}")
+                                print(f"   {'#':<3} {'TITLE':<25} {'DUE DATE':<15} {'FILES'}")
+                                print("   " + "─" * 65)
+                                
+                                for asn in assignments:
+                                    files = []
+                                    if asn['qp_link']: files.append("📄 QP")
+                                    if asn['sub_link']: files.append("✅ SUB")
+                                    f_str = ", ".join(files) if files else "None"
+                                    print(f"   {asn['s_no']:<3} {asn['title']:<25} {asn['due_date']:<15} {f_str}")
+                                print("   " + "─" * 65)
+                                print("   [#]  Enter # to Download Files")
+                                print("   [A]  Download ALL Files for this course")
+                                print("   [0]  Go Back")
+                                
+                                a_sel = input("\n   Choice: ").strip().upper()
+                                if a_sel == '0': break
+                                
+                                save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                                
+                                if a_sel == 'A':
+                                    print(f"   [.] Downloading all available files to {save_dir}...")
+                                    for asn in assignments:
+                                        if asn['qp_link']:
+                                            fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_QP"
+                                            await download_course_material(client, asn['qp_link'], save_dir, fname)
+                                        if asn['sub_link']:
+                                            fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_MySubmission"
+                                            await download_course_material(client, asn['sub_link'], save_dir, fname)
+                                    print("   [✓] Bulk download complete.")
+                                    
+                                elif a_sel.isdigit():
+                                    a_idx = int(a_sel) - 1
+                                    if 0 <= a_idx < len(assignments):
+                                        target_asn = assignments[a_idx]
+                                        
+                                        if target_asn['qp_link']:
+                                            fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_QP"
+                                            print(f"   [.] Downloading Question Paper...")
+                                            res, path = await download_course_material(client, target_asn['qp_link'], save_dir, fname)
+                                            if res: print(f"   [✓] Saved: {path}")
+                                            
+                                        if target_asn['sub_link']:
+                                            fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_MySubmission"
+                                            print(f"   [.] Downloading Your Submission...")
+                                            res, path = await download_course_material(client, target_asn['sub_link'], save_dir, fname)
+                                            if res: print(f"   [✓] Saved: {path}")
+                                            
+                                        if not target_asn['qp_link'] and not target_asn['sub_link']:
+                                            print("   [!] No files available to download for this assignment.")
+                                    else:
+                                        print("   [!] Invalid number.")
+                        else:
+                            print("   [!] Invalid selection.")
+                    except ValueError:
+                        print("   [!] Please enter a valid number.")
 
 if __name__ == "__main__":
     try:

@@ -1250,3 +1250,91 @@ async def download_w_outpass(client, url_suffix, folder_path, base_filename):
             return False, f"HTTP {response.status_code}"
     except Exception as e:
         return False, str(e)
+
+async def fetchDACourseList(client, sem_id):
+    """Fetches the list of courses that have Digital Assignments for a given semester."""
+    from bs4 import BeautifulSoup
+    import time
+    
+    url = "https://vtop.vitap.ac.in/vtop/examinations/doDigitalAssignment"
+    payload = {
+        "semesterSubId": sem_id,
+        "authorizedID": getattr(client, "username", ""),
+        "_csrf": getattr(client, "csrf_token", ""),
+        "x": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+    }
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    
+    try:
+        res = await client._client.post(url, data=payload, headers=headers)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        courses = []
+        
+        table = soup.find('table', class_='customTable')
+        if table:
+            for row in table.find_all('tr')[1:]:  # Skip header
+                cols = row.find_all('td')
+                if len(cols) >= 6:
+                    courses.append({
+                        "class_id": cols[1].get_text(strip=True),
+                        "code": cols[2].get_text(strip=True),
+                        "title": cols[3].get_text(strip=True),
+                        "type": cols[4].get_text(strip=True),
+                        "faculty": cols[5].get_text(strip=True)
+                    })
+        return courses
+    except Exception as e:
+        print(f"   [!] Error fetching DA courses: {e}")
+        return []
+
+async def fetchDADetails(client, class_id):
+    """Fetches assignments, deadlines, and download links for a specific course."""
+    from bs4 import BeautifulSoup
+    import time, re
+    
+    url = "https://vtop.vitap.ac.in/vtop/examinations/processDigitalAssignment"
+    payload = {
+        "classId": class_id,
+        "authorizedID": getattr(client, "username", ""),
+        "_csrf": getattr(client, "csrf_token", ""),
+        "x": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+    }
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+
+    try:
+        res = await client._client.post(url, data=payload, headers=headers)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        assignments = []
+        tables = soup.find_all('table', class_='customTable')
+        
+        if len(tables) > 1:
+            for row in tables[1].find_all('tr'):
+                cols = row.find_all('td')
+                if len(cols) >= 9 and cols[0].get_text(strip=True).isdigit():
+                    
+                    qp_link, sub_link = None, None
+                    
+                    # Column 5: Question Paper Link
+                    qp_a = cols[5].find('a')
+                    if qp_a:
+                        match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", qp_a['href'])
+                        if match: qp_link = match.group(1)
+                            
+                    # Column 8: Student Submission Link
+                    sub_a = cols[8].find('a')
+                    if sub_a:
+                        match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", sub_a['href'])
+                        if match: sub_link = match.group(1)
+
+                    assignments.append({
+                        "s_no": cols[0].get_text(strip=True),
+                        "title": cols[1].get_text(strip=True),
+                        "due_date": cols[4].get_text(strip=True),
+                        "qp_link": qp_link,
+                        "sub_link": sub_link
+                    })
+        return assignments
+    except Exception as e:
+        print(f"   [!] Error fetching DA details: {e}")
+        return []
