@@ -7,12 +7,11 @@ import subprocess
 import os
 import glob
 import re
+import math  # Added for Attendance Calculator
+import urllib.request
 from rich.console import Console
 from datetime import datetime as dt 
 from vitap_vtop_client.client import VtopClient
-
-console = Console()
-
 from services import (
     vtopClientLogin,
     fetchSemesters,
@@ -39,6 +38,48 @@ from services import (
     fetchDACourseList,
     fetchDADetails
 )
+console = Console()
+# --- CONFIGURATION ---
+CURRENT_VERSION = "2.0"
+REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
+SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
+
+def check_for_updates():
+    # 1. Subtle check message
+    print("   [.] Checking for updates...", end="\r") 
+    try:
+        # Fetch remote code silently
+        with urllib.request.urlopen(REPO_URL) as response:
+            remote_code = response.read().decode('utf-8')
+        match = re.search(r'CURRENT_VERSION = "(.*?)"', remote_code)
+        if match:
+            remote_version = match.group(1)
+            # Only wake up if versions mismatch
+            if remote_version != CURRENT_VERSION:
+                # Clear the previous line
+                print(" " * 50, end="\r")
+                print(f"   🚨 UPDATE AVAILABLE: v{CURRENT_VERSION} -> v{remote_version}")
+                choice = input("   Download now? (y/n): ").lower().strip()
+                if choice == 'y':
+                    print("   [⬇️] Downloading new update...", end="\r")
+                    # Overwrite vtop.py
+                    with open(__file__, 'w', encoding='utf-8') as f:
+                        f.write(remote_code)
+                    # Overwrite services.py
+                    with urllib.request.urlopen(SERVICES_URL) as response:
+                        services_code = response.read().decode('utf-8')
+                    with open("services.py", 'w', encoding='utf-8') as f:
+                        f.write(services_code)
+                    print("   ✅ Update complete! Restarting script...  ")
+                    sys.exit()
+                else:
+                    print("   [!] Update skipped.")
+            else:
+                # If up to date, just clear the line so it looks like nothing happened
+                print(" " * 50, end="\r")
+    except Exception:
+        # If internet is down, just fail silently and let the app run
+        print(" " * 50, end="\r")
 
 async def download_material(client, url_suffix, filename):
     return await download_gate_pass(client, url_suffix, filename)
@@ -139,7 +180,7 @@ async def print_attendance_with_details(client, semester_id, summary_data):
         except: is_low = False
         status_icon = "🔴" if is_low else "🟢"
         print(f"\n   {status_icon} {code} : {name} ({ctype})")
-        print(f"       Attendance: {perc}% ({attended}/{total})")
+        print(f"        Attendance: {perc}% ({attended}/{total})")
         c_id = sub.get('course_id')
         type_id = sub.get('type_id') 
         if not type_id: type_id = sub.get('type_code')
@@ -149,7 +190,6 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                 if history:
                     def parse_date(x):
                         try: 
-                            
                             return dt.strptime(x['date'], "%d-%b-%Y")
                         except: 
                             try: return dt.strptime(x['date'], "%d-%m-%Y")
@@ -157,12 +197,12 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                     
                     history.sort(key=parse_date)
                     last_date = history[-1].get('date', 'N/A')
-                    print(f"       📅 Attendance Last Updated on: {last_date}")
+                    print(f"        📅 Attendance Last Updated on: {last_date}")
                     absents = [h for h in history if "Present" not in h['status']]
                     if absents:
-                        print(f"       [!] Found {len(absents)} Absences:")
-                        print(f"           {'DATE':<12} {'DAY':<5} {'SLOT':<8} {'STATUS'}") 
-                        print("           " + "-" * 40)
+                        print(f"        [!] Found {len(absents)} Absences:")
+                        print(f"            {'DATE':<12} {'DAY':<5} {'SLOT':<8} {'STATUS'}") 
+                        print("            " + "-" * 40)
                         absents.sort(key=parse_date, reverse=True)
                         for h in absents:
                             date_str = h.get('date', '-')
@@ -172,15 +212,15 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                                 if d_obj != dt.min:
                                     day_name = d_obj.strftime("%a")
                             except: pass
-                            print(f"           {date_str:<12} {day_name:<5} {h['slot']:<8} ❌ {h['status']}")
+                            print(f"            {date_str:<12} {day_name:<5} {h['slot']:<8} ❌ {h['status']}")
                     else:
-                          print(f"       (History fetched: {len(history)} classes, All Present)")
+                          print(f"        (History fetched: {len(history)} classes, All Present)")
                 else:
-                    print("       (No history records found)")
+                    print("        (No history records found)")
             except Exception as e:
-                print(f"       [!] Detail fetch error: {e}")
+                print(f"        [!] Detail fetch error: {e}")
         else:
-            print("       [!] Cannot fetch details (ID missing).")
+            print("        [!] Cannot fetch details (ID missing).")
         print("   " + "-" * 40)
 
 def print_attendance(data):
@@ -532,41 +572,59 @@ async def main():
 
 
         while True:
-            print("\nAVAILABLE OPTIONS:")
-            print("  1. View Profile & Proctor Details")
-            print("  2. View Grade History (Transcript)")
-            print("  3. View Attendance")
-            print("  4. View Full Timetable")
-            print("  5. View Today's Schedule")
-            print("  6. View Internal Marks")
-            print("  7. View Exam Schedule")
-            print("  8. Change/Select Semester")
-            print("  9. View Credits (Academics)")
-            print("  10. View Course Page (Lecture Plan & Materials)")
-            print("  11. General Outing")
-            print("  12. Weekend Outing")
-            print("  13. Digital Assignments")
-            print("  0. Exit")
+            # --- NEW SORTED MENU ---
+            print_header("MAIN MENU")
+            print(f"   Logged in as: {client.username or 'Unknown'}")
+            print("   " + "─" * 40)
             
+            print("   [ ACADEMICS ]")
+            print("   1.  Today's Schedule")
+            print("   2.  Full Timetable")
+            print("   3.  Attendance Record")
+            print("   4.  Internal Marks")
+            print("   5.  Grade History (Transcript)")
+            print("   6.  Credits Distribution")
+            print("   7.  Course Page (Lecture Plan & Materials)")
+            print("   8.  Digital Assignments")
+            print("   9.  Exam Schedule")
             
-            choice = input(f"\n[{reg_no}] Enter choice (0-13): ").strip()
+            print("\n   [ HOSTEL ]")
+            print("   10. General Outing")
+            print("   11. Weekend Outing")
+            
+            print("\n   [ TOOLS ]")
+            print("   12. Attendance Calculator")
+            print("   13. Student Profile")
+            print("   14. Change Semester")
+            
+            print("\n   0.  Exit")
+            print("   " + "─" * 40)
+            
+            choice = input(f"\n[{reg_no}] Enter choice (0-14): ").strip()
 
             if choice == '0':
                 print("Logging out... Goodbye!")
                 break
             
-            if choice == '1':
-                print_header("STUDENT PROFILE")
-                print_profile(profile_data)
-
-            elif choice == '2':
-                print_header("ACADEMIC TRANSCRIPT")
-                g_data = await fetchGradeHistory(client)
-                print_grade_history(g_data)
-
-            elif choice == '3':
+            elif choice == '1': # Today's Schedule (Old 5)
                 if not target_sem:
-                    print("[!] No semester selected. Use option 8.")
+                    print("[!] No semester selected. Use option 14.")
+                    continue
+                print_header(f"TODAY'S SCHEDULE - {current_sem_name}")
+                data = await fetchTimetable(client, target_sem)
+                print_today_schedule(data)
+
+            elif choice == '2': # Full Timetable (Old 4)
+                if not target_sem:
+                    print("[!] No semester selected. Use option 14.")
+                    continue
+                print_header(f"FULL TIMETABLE - {current_sem_name}")
+                data = await fetchTimetable(client, target_sem)
+                print_timetable(data)
+
+            elif choice == '3': # Attendance (Old 3)
+                if not target_sem:
+                    print("[!] No semester selected. Use option 14.")
                     continue
                 while True:
                     print("\n--- ATTENDANCE MENU ---")
@@ -584,68 +642,28 @@ async def main():
                         break
                     else:
                         print("[!] Invalid option")
-            
-            elif choice == '4':
-                if not target_sem:
-                    print("[!] No semester selected. Use option 8.")
-                    continue
-                print_header(f"FULL TIMETABLE - {current_sem_name}")
-                data = await fetchTimetable(client, target_sem)
-                print_timetable(data)
 
-            elif choice == '5':
+            elif choice == '4': # Internal Marks (Old 6)
                 if not target_sem:
-                    print("[!] No semester selected. Use option 8.")
-                    continue
-                print_header(f"TODAY'S SCHEDULE - {current_sem_name}")
-                data = await fetchTimetable(client, target_sem)
-                print_today_schedule(data)
-
-            elif choice == '6':
-                if not target_sem:
-                    print("[!] No semester selected. Use option 8.")
+                    print("[!] No semester selected. Use option 14.")
                     continue
                 print_header(f"INTERNAL MARKS - {current_sem_name}")
                 data = await fetchMarks(client, target_sem)
                 print_marks(data)
 
-            elif choice == '7':
-                if not target_sem:
-                    print("[!] No semester selected. Use option 8.")
-                    continue
-                print_header(f"EXAM SCHEDULE - {current_sem_name}")
-                data = await fetchExamSchedule(client, target_sem)
-                print_exam_schedule(data)
+            elif choice == '5': # Grade History (Old 2)
+                print_header("ACADEMIC TRANSCRIPT")
+                g_data = await fetchGradeHistory(client)
+                print_grade_history(g_data)
 
-            elif choice == '8':
-                if not available_sems:
-                    print("   ...No semester data available. Re-scraping...")
-                    available_sems = await fetchSemesters(client)
-                if available_sems:
-                    print_header("SELECT SEMESTER")
-                    for i, s in enumerate(available_sems):
-                        print(f"   {i+1}. {s['name']}")
-                    sel = input("\nSelect a semester number (0 to cancel): ").strip()
-                    if sel == '0': continue
-                    try:
-                        idx = int(sel) - 1
-                        if 0 <= idx < len(available_sems):
-                            target_sem = available_sems[idx]['id']
-                            current_sem_name = available_sems[idx]['name']
-                            print(f"[+] Active Semester set to: {current_sem_name}")
-                        else:
-                            print("[!] Invalid selection.")
-                    except ValueError:
-                        print("[!] Please enter a valid number.")
-
-            elif choice == '9':
+            elif choice == '6': # Credits (Old 9)
                 print_header("ACADEMIC CREDITS DISTRIBUTION")
                 c_data = await fetchCredits(client)
                 print_credits(c_data)
 
-            elif choice == '10': 
+            elif choice == '7': # Course Page (Old 10)
                 if not target_sem:
-                    print("[!] No semester selected. Use option 8.")
+                    print("[!] No semester selected. Use option 14.")
                     continue
                 
                 print(f"   [.] Fetching Course List...")
@@ -824,21 +842,9 @@ async def main():
                                         else:
                                             res, _ = await download_course_material(client, gen['download_path'], save_dir, fname)
                                             if res: count += 1
-                                        
+                                    
                                     print(f"   [✓] Downloaded {count} new files. (Skipped {skipped})")
                                             
-                                    # Download General Materials
-                                    for i, gen in enumerate(c_page['general']):
-                                        fname = format_general_name(selected_code, gen['title'], i+1)
-                                        if check_exists(fname):
-                                            print(f"   [-] Skipped (Already exists): {fname[:50]}...")
-                                            skipped += 1
-                                        else:
-                                            res, _ = await download_course_material(client, gen['download_path'], save_dir, fname)
-                                            if res: count += 1
-                                        
-                                    print(f"   [✓] Downloaded {count} new files. (Skipped {skipped})")
-
                                 # --- 2. Download General Material (e.g., G1) ---
                                 elif dl_choice.startswith('G'):
                                     try:
@@ -891,21 +897,18 @@ async def main():
                                                     print(f"   [.] Downloading Reference {r_idx+1}...")
                                                     res, filepath = await download_course_material(client, r_path, save_dir, fname)
                                                     if res: print(f"   [✓] Saved: {filepath}")
-                                            
+                                                    
                                             # 3. Print Web Links to CLI
                                             if target_lec.get('web_links'):
                                                 downloads_started = True
                                                 print(f"\n   [🔗] Web Links for this lecture:")
                                                 for link in target_lec['web_links']:
                                                     print(f"        -> {link}")
-                                                
+                                                    
                                             # If literally nothing was there
                                             if not downloads_started:
                                                 print("   [!] No materials available for this lecture.")
                                                 
-                                            # If literally nothing was there
-                                            if not downloads_started:
-                                                print("   [!] No materials available for this lecture.")
                                         else:
                                             print("   [!] Invalid Lecture S.No.")
                                     except ValueError: 
@@ -920,298 +923,9 @@ async def main():
                     except ValueError:
                         print("   [!] Please enter a number.")
 
-            elif choice == '11':
-                print_header("GENERAL OUTING SYSTEM")
-                
-                print("   [.] Fetching student details...")
-                data = await fetchGeneralOuting(client)
-                
-                if not data or not data.get('info'):
-                    print("   [!] Could not fetch data. Try logging in again.")
-                    continue
-
-                info = data['info']
-                history = data.get('history', [])
-
-                print(f"\n   STUDENT: {info.get('name')}")
-                print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
-                print("   " + "-" * 60)
-                
-                print("\n   MENU:")
-                print("   1. Apply for New Outing")
-                print("   2. View History / Actions")
-                print("   0. Back")
-                
-                sub = input("\n   Select Option: ").strip()
-                
-                if sub == '2':
-                    printGeneralOuting(history)
-
-                    if history:
-                        print("\n   [P] Download Gate Pass (PDF)")
-                        print("   [D] Delete a Request")
-                        print("   [Enter] Go Back")
-                        
-                        act = input("   Choice: ").strip().upper()
-                        
-                        if act == 'P':
-                            try:
-                                idx = int(input("   Enter IDX to download: ")) - 1
-                                if 0 <= idx < len(history):
-                                    item = history[idx]
-                                    if item['download_url']:
-                                        print("   [.] Downloading...")
-                                        
-                                        home = os.path.expanduser("~")
-                                        download_folder = os.path.join(home, "Downloads")
-                                        clean_date = item['out_date'].replace(" ", "-")
-                                        filename = f"general_outing_{clean_date}.pdf"
-                                        full_path = os.path.join(download_folder, filename)
-                                        res, msg = await download_g_outpass(client, item['download_url'], full_path)
-                                        
-                                        if res: 
-                                            print(f"   ✅ Saved to: {full_path}")
-                                        else:   
-                                            print(f"   ❌ {msg}")
-                                    else:
-                                        print("   [!] No pass available (Must be Approved).")
-                                else:
-                                    print("   [!] Invalid Index.")
-                            except ValueError:
-                                print("   [!] Please enter a number.")
-                        
-                        elif act == 'D':
-                            try:
-                                idx = int(input("   Enter IDX to delete: ")) - 1
-                                if 0 <= idx < len(history):
-                                    item = history[idx]
-                                    if "Wait" in item['status'] or "Pending" in item['status']:
-                                         if item['booking_id']:
-                                            confirm = input(f"   Delete request for {item['place']}? (y/n): ")
-                                            if confirm.lower() == 'y':
-                                                res, msg = await deleteOuting(client, item['booking_id'])
-                                                if res: print(f"   ✅ {msg}")
-                                                else:   print(f"   ❌ {msg}")
-                                    else:
-                                        print("   [!] Cannot delete. (Only 'Waiting' requests can be deleted)")
-                                else:
-                                    print("   [!] Invalid Index.")
-                            except ValueError:
-                                print("   [!] Please enter a number.")
-
-                elif sub == '1':
-                    print("\n   --- NEW OUTING APPLICATION ---")
-                    print("   ⚠️  NOTE: You must apply at least 24 HOURS in advance.")
-                    print("   [Enter '0' to Cancel and Go Back]")
-                    
-                    try:
-                        place = input("\n   Place of Visit : ").strip()
-                        if place == '0':
-                            print("   [x] Cancelled.")
-                            continue
-
-                        purpose = input("   Purpose        : ").strip()
-                        if purpose == '0':
-                            print("   [x] Cancelled.")
-                            continue
-
-                        print("   (Format: DD-MMM-YYYY, e.g., 11-Feb-2026)")
-                        out_d = input("   Out Date       : ").strip()
-                        if out_d == '0': continue
-
-                        out_t = input("   Out Time (HH:MM): ").strip()
-                        
-                        in_d  = input("   In Date        : ").strip()
-                        in_t  = input("   In Time (HH:MM): ").strip()
-                        
-                        confirm = input("\n   Submit this request? (y/n): ").lower()
-                        if confirm == 'y':
-                            print("\n   [.] Submitting...")
-                            success, msg = await submitGeneralOuting(client, info, place, purpose, out_d, out_t, in_d, in_t)
-                            
-                            if success:
-                                print(f"   ✅ SUCCESS: {msg}")
-                            else:
-                                print(f"   ❌ FAILED: {msg}")
-                        else:
-                            print("   [x] Cancelled.")
-
-                    except Exception as e:
-                        print(f"   [!] Error: {e}")
-
-            elif choice == '12':
-                
-                
-                print_header("WEEKEND OUTING SYSTEM")
-                print("   [.] Fetching details...")
-                data = await fetchWeekendOuting(client)
-                
-                if not data:
-                    print("   [!] Could not fetch data. (Check internet or re-login)")
-                    continue
-
-                info = data.get('info', {})
-                history = data.get('history', [])
-                can_apply = data.get('can_apply', True)
-
-                print(f"\n   STUDENT: {info.get('name')}")
-                print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
-                
-                if not can_apply:
-                    print("   STATUS : 🔴 Applications Closed (Tue-Fri Only)")
-                else:
-                    print("   STATUS : 🟢 Applications Open")
-                    
-                print("   " + "-" * 60)
-                
-                while True:
-                    print("\n   MENU:")
-                    print("   1. Apply for Weekend Outing")
-                    print("   2. View History / Delete / Download Outpass")
-                    print("   0. Back")
-                    
-                    sub = input("\n   Select Option: ").strip()
-                    if sub == '0': break
-                    
-                    if sub == '1':
-                        if not can_apply:
-                            print("\n   ⚠️  ACCESS DENIED: Time Restriction")
-                            print("   [!] You can only apply from Tuesday 12:00 AM to Friday 11:59 PM.")
-                            input("   Press Enter to return...")
-                            continue
-                        
-                        print("\n   --- NEW WEEKEND OUTING ---")
-                        print("   [Enter '0' to Cancel at any time]")
-                        
-                        try:
-                            # 1. Strict Place Selection
-                            places = ["Vijayawada", "Guntur", "Tenali", "Eluru", "Others"]
-                            print("\n   Select Place of Visit:")
-                            for i, p in enumerate(places):
-                                print(f"   {i+1}. {p}")
-                            p_idx = input("   Choice: ").strip()
-                            if p_idx == '0': continue
-                            place = places[int(p_idx) - 1]
-                            
-                            # 2. Purpose
-                            purpose = input("\n   Purpose (Max 20 chars): ").strip()
-                            if purpose == '0': continue
-                            
-                            # 3. Date
-                            print("\n   (Format: DD-MMM-YYYY, e.g., 22-Feb-2026)")
-                            print("   *Note: Must be within the next 6 days.")
-                            out_d = input("   Date: ").strip()
-                            if out_d == '0': continue
-                            
-                            # 4. Strict Time Selection
-                            times = [
-                                "9:30 AM- 3:30PM", 
-                                "10:30 AM- 4:30PM", 
-                                "11:30 AM- 5:30PM", 
-                                "12:30 PM- 6:30PM"
-                            ]
-                            print("\n   Select Outing Time:")
-                            for i, t in enumerate(times):
-                                print(f"   {i+1}. {t}")
-                            t_idx = input("   Choice: ").strip()
-                            if t_idx == '0': continue
-                            out_t = times[int(t_idx) - 1]
-                            
-                            # 5. Strict Contact Validation
-                            import re
-                            while True:
-                                contact = input("\n   Contact No (10 digits, starts with 7-9): ").strip()
-                                if contact == '0': break
-                                if re.match(r"^[7-9]\d{9}$", contact):
-                                    break
-                                else:
-                                    print("   [!] Invalid format. Try again.")
-                            if contact == '0': continue
-                            
-                            confirm = input(f"\n   Submit request for {place} on {out_d}? (y/n): ").lower()
-                            if confirm == 'y':
-                                print("\n   [.] Submitting payload...")
-                                success, msg = await submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact)
-                                if success: 
-                                    print(f"   ✅ SUCCESS: {msg}")
-                                    data = await fetchWeekendOuting(client)
-                                    history = data.get('history', [])
-                                else: 
-                                    print(f"   ❌ FAILED: {msg}")
-                            else: 
-                                print("   [x] Cancelled.")
-                                
-                        except (ValueError, IndexError): 
-                            print("   [!] Invalid selection. Please enter the correct number.")
-                        except Exception as e: 
-                            print(f"   [!] Error: {e}")
-
-                    elif sub == '2':
-                        printWeekendOuting(history)
-                        
-                        if history:
-                            print("\n   [#] Type Row Number to Download Outpass")
-                            print("   [D] Delete a Pending Request")
-                            print("   [0] Go Back")
-                            act = input("\n   Choice: ").strip().upper()
-                            
-                            if act == '0' or act == '':
-                                continue
-                                
-                            # HANDLE DELETION
-                            elif act == 'D':
-                                try:
-                                    idx = int(input("   Enter Row # to delete: ")) - 1
-                                    if 0 <= idx < len(history):
-                                        item = history[idx]
-                                        if "Wait" in item['status'] or "Pending" in item['status']:
-                                            if item['booking_id']:
-                                                confirm = input(f"   Delete request for {item['place']}? (y/n): ")
-                                                if confirm.lower() == 'y':
-                                                    res, msg = await deleteWeekendOuting(client, item['booking_id'])
-                                                    if res: 
-                                                        print(f"   ✅ {msg}")
-                                                        data = await fetchWeekendOuting(client)
-                                                        history = data.get('history', [])
-                                                    else:   
-                                                        print(f"   ❌ {msg}")
-                                            else:
-                                                print("   [!] Could not find Booking ID to delete.")
-                                        else:
-                                            print("   [!] Cannot delete active/processed requests.")
-                                    else:
-                                        print("   [!] Invalid Row Number.")
-                                except ValueError:
-                                    print("   [!] Please enter a valid number.")
-                                    
-                            # HANDLE PDF DOWNLOAD
-                            elif act.isdigit():
-                                idx = int(act) - 1
-                                if 0 <= idx < len(history):
-                                    selected_outing = history[idx]
-                                    if selected_outing['download_link']:
-                                        save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-                                        fname = f"Outpass_{selected_outing['out_date']}_{selected_outing['place']}"
-                                        
-                                        print(f"   [.] Securing Outpass from VTOP servers...")
-                                        res, path = await download_w_outpass(
-                                            client, 
-                                            selected_outing['download_link'], 
-                                            save_dir, 
-                                            fname
-                                        )
-                                        if res: print(f"   [✓] Saved to: {path}")
-                                        else: print(f"   [x] Failed to download Outpass.")
-                                    else:
-                                        print("   [!] Outpass is not available for this request yet.")
-                                else:
-                                    print("   [!] Invalid Row Number.")
-
-            elif choice == '13':
-                from services import fetchDACourseList, fetchDADetails
-                
+            elif choice == '8': # Digital Assignments (Old 13)
                 if not target_sem:
-                    print("[!] No semester selected. Use option 8.")
+                    print("[!] No semester selected. Use option 14.")
                     continue
                     
                 print(f"   [.] Fetching Digital Assignment Courses...")
@@ -1305,10 +1019,384 @@ async def main():
                     except ValueError:
                         print("   [!] Please enter a valid number.")
 
+            elif choice == '9': # Exam Schedule (Old 7)
+                if not target_sem:
+                    print("[!] No semester selected. Use option 14.")
+                    continue
+                print_header(f"EXAM SCHEDULE - {current_sem_name}")
+                data = await fetchExamSchedule(client, target_sem)
+                print_exam_schedule(data)
+
+            elif choice == '10': # General Outing (Old 11)
+                print_header("GENERAL OUTING SYSTEM")
+                print("   [.] Fetching student details...")
+                data = await fetchGeneralOuting(client)
+                
+                if not data or not data.get('info'):
+                    print("   [!] Could not fetch data. Try logging in again.")
+                    continue
+
+                info = data['info']
+                history = data.get('history', [])
+
+                print(f"\n   STUDENT: {info.get('name')}")
+                print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
+                print("   " + "-" * 60)
+                
+                print("\n   MENU:")
+                print("   1. Apply for New Outing")
+                print("   2. View History / Actions")
+                print("   0. Back")
+                
+                sub = input("\n   Select Option: ").strip()
+                
+                if sub == '2':
+                    printGeneralOuting(history)
+
+                    if history:
+                        print("\n   [P] Download Gate Pass (PDF)")
+                        print("   [D] Delete a Request")
+                        print("   [Enter] Go Back")
+                        
+                        act = input("   Choice: ").strip().upper()
+                        
+                        if act == 'P':
+                            try:
+                                idx = int(input("   Enter IDX to download: ")) - 1
+                                if 0 <= idx < len(history):
+                                    item = history[idx]
+                                    if item['download_url']:
+                                        print("   [.] Downloading...")
+                                        
+                                        home = os.path.expanduser("~")
+                                        download_folder = os.path.join(home, "Downloads")
+                                        clean_date = item['out_date'].replace(" ", "-")
+                                        filename = f"general_outing_{clean_date}.pdf"
+                                        full_path = os.path.join(download_folder, filename)
+                                        res, msg = await download_g_outpass(client, item['download_url'], full_path)
+                                        
+                                        if res: 
+                                            print(f"   ✅ Saved to: {full_path}")
+                                        else:   
+                                            print(f"   ❌ {msg}")
+                                    else:
+                                        print("   [!] No pass available (Must be Approved).")
+                                else:
+                                    print("   [!] Invalid Index.")
+                            except ValueError:
+                                print("   [!] Please enter a number.")
+                        
+                        elif act == 'D':
+                            try:
+                                idx = int(input("   Enter IDX to delete: ")) - 1
+                                if 0 <= idx < len(history):
+                                    item = history[idx]
+                                    if "Wait" in item['status'] or "Pending" in item['status']:
+                                         if item['booking_id']:
+                                             confirm = input(f"   Delete request for {item['place']}? (y/n): ")
+                                             if confirm.lower() == 'y':
+                                                 res, msg = await deleteOuting(client, item['booking_id'])
+                                                 if res: print(f"   ✅ {msg}")
+                                                 else:   print(f"   ❌ {msg}")
+                                    else:
+                                        print("   [!] Cannot delete. (Only 'Waiting' requests can be deleted)")
+                                else:
+                                    print("   [!] Invalid Index.")
+                            except ValueError:
+                                print("   [!] Please enter a number.")
+
+                elif sub == '1':
+                    print("\n   --- NEW OUTING APPLICATION ---")
+                    print("   ⚠️  NOTE: You must apply at least 24 HOURS in advance.")
+                    print("   [Enter '0' to Cancel and Go Back]")
+                    
+                    try:
+                        place = input("\n   Place of Visit : ").strip()
+                        if place == '0':
+                            print("   [x] Cancelled.")
+                            continue
+
+                        purpose = input("   Purpose         : ").strip()
+                        if purpose == '0':
+                            print("   [x] Cancelled.")
+                            continue
+
+                        print("   (Format: DD-MMM-YYYY, e.g., 11-Feb-2026)")
+                        out_d = input("   Out Date        : ").strip()
+                        if out_d == '0': continue
+
+                        out_t = input("   Out Time (HH:MM): ").strip()
+                        
+                        in_d  = input("   In Date         : ").strip()
+                        in_t  = input("   In Time (HH:MM): ").strip()
+                        
+                        confirm = input("\n   Submit this request? (y/n): ").lower()
+                        if confirm == 'y':
+                            print("\n   [.] Submitting...")
+                            success, msg = await submitGeneralOuting(client, info, place, purpose, out_d, out_t, in_d, in_t)
+                            
+                            if success:
+                                print(f"   ✅ SUCCESS: {msg}")
+                            else:
+                                print(f"   ❌ FAILED: {msg}")
+                        else:
+                            print("   [x] Cancelled.")
+
+                    except Exception as e:
+                        print(f"   [!] Error: {e}")
+
+            elif choice == '11': # Weekend Outing (Old 12)
+                print_header("WEEKEND OUTING SYSTEM")
+                print("   [.] Fetching details...")
+                data = await fetchWeekendOuting(client)
+                
+                if not data:
+                    print("   [!] Could not fetch data. (Check internet or re-login)")
+                    continue
+
+                info = data.get('info', {})
+                history = data.get('history', [])
+                can_apply = data.get('can_apply', True)
+
+                print(f"\n   STUDENT: {info.get('name')}")
+                print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
+                
+                if not can_apply:
+                    print("   STATUS : 🔴 Applications Closed (Tue-Fri Only)")
+                else:
+                    print("   STATUS : 🟢 Applications Open")
+                    
+                print("   " + "-" * 60)
+                
+                while True:
+                    print("\n   MENU:")
+                    print("   1. Apply for Weekend Outing")
+                    print("   2. View History / Delete / Download Outpass")
+                    print("   0. Back")
+                    
+                    sub = input("\n   Select Option: ").strip()
+                    if sub == '0': break
+                    
+                    if sub == '1':
+                        if not can_apply:
+                            print("\n   ⚠️  ACCESS DENIED: Time Restriction")
+                            print("   [!] You can only apply from Tuesday 12:00 AM to Friday 11:59 PM.")
+                            input("   Press Enter to return...")
+                            continue
+                        
+                        print("\n   --- NEW WEEKEND OUTING ---")
+                        print("   [Enter '0' to Cancel at any time]")
+                        
+                        try:
+                            # 1. Strict Place Selection
+                            places = ["Vijayawada", "Guntur", "Tenali", "Eluru", "Others"]
+                            print("\n   Select Place of Visit:")
+                            for i, p in enumerate(places):
+                                print(f"   {i+1}. {p}")
+                            p_idx = input("   Choice: ").strip()
+                            if p_idx == '0': continue
+                            place = places[int(p_idx) - 1]
+                            
+                            # 2. Purpose
+                            purpose = input("\n   Purpose (Max 20 chars): ").strip()
+                            if purpose == '0': continue
+                            
+                            # 3. Date
+                            print("\n   (Format: DD-MMM-YYYY, e.g., 22-Feb-2026)")
+                            print("   *Note: Must be within the next 6 days.")
+                            out_d = input("   Date: ").strip()
+                            if out_d == '0': continue
+                            
+                            # 4. Strict Time Selection
+                            times = [
+                                "9:30 AM- 3:30PM", 
+                                "10:30 AM- 4:30PM", 
+                                "11:30 AM- 5:30PM", 
+                                "12:30 PM- 6:30PM"
+                            ]
+                            print("\n   Select Outing Time:")
+                            for i, t in enumerate(times):
+                                print(f"   {i+1}. {t}")
+                            t_idx = input("   Choice: ").strip()
+                            if t_idx == '0': continue
+                            out_t = times[int(t_idx) - 1]
+                            
+                            # 5. Strict Contact Validation
+                            while True:
+                                contact = input("\n   Contact No (10 digits, starts with 7-9): ").strip()
+                                if contact == '0': break
+                                if re.match(r"^[7-9]\d{9}$", contact):
+                                    break
+                                else:
+                                    print("   [!] Invalid format. Try again.")
+                            if contact == '0': continue
+                            
+                            confirm = input(f"\n   Submit request for {place} on {out_d}? (y/n): ").lower()
+                            if confirm == 'y':
+                                print("\n   [.] Submitting payload...")
+                                success, msg = await submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact)
+                                if success: 
+                                    print(f"   ✅ SUCCESS: {msg}")
+                                    data = await fetchWeekendOuting(client)
+                                    history = data.get('history', [])
+                                else: 
+                                    print(f"   ❌ FAILED: {msg}")
+                            else: 
+                                print("   [x] Cancelled.")
+                                
+                        except (ValueError, IndexError): 
+                            print("   [!] Invalid selection. Please enter the correct number.")
+                        except Exception as e: 
+                            print(f"   [!] Error: {e}")
+
+                    elif sub == '2':
+                        printWeekendOuting(history)
+                        
+                        if history:
+                            print("\n   [#] Type Row Number to Download Outpass")
+                            print("   [D] Delete a Pending Request")
+                            print("   [0] Go Back")
+                            act = input("\n   Choice: ").strip().upper()
+                            
+                            if act == '0' or act == '':
+                                continue
+                                
+                            # HANDLE DELETION
+                            elif act == 'D':
+                                try:
+                                    idx = int(input("   Enter Row # to delete: ")) - 1
+                                    if 0 <= idx < len(history):
+                                        item = history[idx]
+                                        if "Wait" in item['status'] or "Pending" in item['status']:
+                                            if item['booking_id']:
+                                                confirm = input(f"   Delete request for {item['place']}? (y/n): ")
+                                                if confirm.lower() == 'y':
+                                                    res, msg = await deleteWeekendOuting(client, item['booking_id'])
+                                                    if res: 
+                                                        print(f"   ✅ {msg}")
+                                                        data = await fetchWeekendOuting(client)
+                                                        history = data.get('history', [])
+                                                    else:   
+                                                        print(f"   ❌ {msg}")
+                                        else:
+                                            print("   [!] Cannot delete active/processed requests.")
+                                    else:
+                                        print("   [!] Invalid Row Number.")
+                                except ValueError:
+                                    print("   [!] Please enter a valid number.")
+                                    
+                            # HANDLE PDF DOWNLOAD
+                            elif act.isdigit():
+                                idx = int(act) - 1
+                                if 0 <= idx < len(history):
+                                    selected_outing = history[idx]
+                                    if selected_outing['download_link']:
+                                        save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                                        fname = f"Outpass_{selected_outing['out_date']}_{selected_outing['place']}"
+                                        
+                                        print(f"   [.] Securing Outpass from VTOP servers...")
+                                        res, path = await download_w_outpass(
+                                            client, 
+                                            selected_outing['download_link'], 
+                                            save_dir, 
+                                            fname
+                                        )
+                                        if res: print(f"   [✓] Saved to: {path}")
+                                        else: print(f"   [x] Failed to download Outpass.")
+                                    else:
+                                        print("   [!] Outpass is not available for this request yet.")
+                                else:
+                                    print("   [!] Invalid Row Number.")
+
+            elif choice == '12': # 75% Calculator (NEW)
+                print_header("75% ATTENDANCE CALCULATOR")
+                print("   Calculate how many classes you can bunk or need to attend.")
+                print("   " + "─" * 60)
+                try:
+                    # 1. Ask for Target Percentage (Default to 75 like the HTML)
+                    target = 75.0
+                    # 2. Ask for Current Stats
+                    present = int(input("   Classes Attended (Present): ").strip())
+                    total = int(input("   Total Classes Conducted:    ").strip())
+                    
+                    if total == 0:
+                        print("   [!] Total classes cannot be zero.")
+                        input("\n   Press Enter to continue...")
+                        continue
+
+                    current_pct = (present / total) * 100
+                    print("   " + "─" * 60)
+                    print(f"   Current Attendance: {current_pct:.2f}%")
+                    
+                    # 3. The Math Logic
+                    if current_pct >= target:
+                        # Logic: How many can I bunk? 
+                        # Formula: floor((100*Present - Target*Total) / Target)
+                        bunkable = math.floor((100 * present - target * total) / target)
+                        
+                        if bunkable > 0:
+                            print(f"   ✅ You are SAFE!")
+                            print(f"   🎉 You can bunk {int(bunkable)} next classes and stay above {target}%.")
+                            
+                            # Future projection
+                            new_total = total + bunkable
+                            new_pct = (present / new_total) * 100
+                            print(f"      (Attendance will drop to {new_pct:.2f}%)")
+                        else:
+                            print(f"   ⚠️  You are on the edge! You cannot miss any more classes.")
+                            
+                    else:
+                        # Logic: How many must I attend?
+                        # Formula: ceil((Target*Total - 100*Present) / (100 - Target))
+                        needed = math.ceil((target * total - 100 * present) / (100 - target))
+                        
+                        print(f"   ❌ You are in the DANGER ZONE!")
+                        print(f"   🚑 You must attend {int(needed)} next classes continuously.")
+                        
+                        # Future projection
+                        new_present = present + needed
+                        new_total = total + needed
+                        new_pct = (new_present / new_total) * 100
+                        print(f"      (Attendance will recover to {new_pct:.2f}%)")
+                        
+                except ValueError:
+                    print("   [!] Invalid input. Please enter numbers only.")
+                except ZeroDivisionError:
+                    print("   [!] Target cannot be 100% (leads to division by zero).")
+                
+                input("\n   Press Enter to return...")
+
+            elif choice == '13': # Profile (Old 1)
+                print_header("STUDENT PROFILE")
+                print_profile(profile_data)
+
+            elif choice == '14': # Change Sem (Old 8)
+                if not available_sems:
+                    print("   ...No semester data available. Re-scraping...")
+                    available_sems = await fetchSemesters(client)
+                if available_sems:
+                    print_header("SELECT SEMESTER")
+                    for i, s in enumerate(available_sems):
+                        print(f"   {i+1}. {s['name']}")
+                    sel = input("\nSelect a semester number (0 to cancel): ").strip()
+                    if sel == '0': continue
+                    try:
+                        idx = int(sel) - 1
+                        if 0 <= idx < len(available_sems):
+                            target_sem = available_sems[idx]['id']
+                            current_sem_name = available_sems[idx]['name']
+                            print(f"[+] Active Semester set to: {current_sem_name}")
+                        else:
+                            print("[!] Invalid selection.")
+                    except ValueError:
+                        print("[!] Please enter a valid number.")
+
 if __name__ == "__main__":
+    # Add this line right here!
+    check_for_updates()
+    
+    # Then your normal startup code...
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n[!] Scraper stopped by user.")
-    except Exception as e:
-        print(f"\n[!] Fatal Error: {e}")
+        print("\n[!] Exiting...")
