@@ -2,7 +2,7 @@
 # Ignore downloaded lecture materials
 downloads/
 VTOP_Downloads/
-
+token.txt
 # --- Python ---
 __pycache__/
 *.py[cod]
