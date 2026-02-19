@@ -7,11 +7,12 @@ import subprocess
 import os
 import glob
 import re
-import math  # Added for Attendance Calculator
+import math
 import urllib.request
 from rich.console import Console
 from datetime import datetime as dt 
 from vitap_vtop_client.client import VtopClient
+
 from services import (
     vtopClientLogin,
     fetchSemesters,
