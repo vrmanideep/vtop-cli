@@ -1106,8 +1106,6 @@ async def deleteGeneralOuting(client, booking_id):
 
 async def fetchWeekendOuting(client):
     """Fetches Weekend Outing eligibility, user info, and history with correct keys."""
-    import re
-    from bs4 import BeautifulSoup
     url = "https://vtop.vitap.ac.in/vtop/hostel/StudentWeekendOuting"
     
     try:
@@ -1139,12 +1137,21 @@ async def fetchWeekendOuting(client):
                         info['hostelBlock'] = cols[2].get_text(strip=True)
                         info['roomNo'] = cols[3].get_text(strip=True)
                         
-                    # Extract Booking ID for deletion
+                   # Extract Booking ID for deletion using the exact "W-Number" pattern
                     action_html = str(cols[8])
                     booking_id = None
-                    b_match = re.search(r"deleteStudentBookingInfo\('([^']+)'\)", action_html)
-                    if b_match: booking_id = b_match.group(1)
+                    
+                    # 1. Try to grab it from standard HTML attributes
+                    delete_btn = cols[8].find('button') or cols[8].find('a')
+                    if delete_btn:
+                        booking_id = delete_btn.get('data-bookingid') or delete_btn.get('data-booking-id')
                         
+                    # 2. If it's buried in a JS function, hunt specifically for W + 8 or more digits
+                    if not booking_id:
+                        b_match = re.search(r"(W\d{8,})", action_html)
+                        if b_match: 
+                            booking_id = b_match.group(1)
+                            
                     # Extract Outpass Download Link
                     download_link = None
                     btn = cols[10].find('a', {'data-leave-url': True})
@@ -1156,25 +1163,20 @@ async def fetchWeekendOuting(client):
                         "place": cols[4].get_text(strip=True),
                         "purpose": cols[5].get_text(strip=True),
                         "out_time": cols[6].get_text(strip=True),
-                        "out_date": cols[7].get_text(strip=True), # Mapped to out_date to match UI
+                        "out_date": cols[7].get_text(strip=True),
                         "booking_id": booking_id,
                         "status": cols[9].get_text(strip=True).replace("Outing Request", "").strip(),
                         "download_link": download_link
                     })
                     
         return {"info": info, "can_apply": can_apply, "history": history}
-    except Exception as e:
-        print(f"   [!] Outing fetch error: {e}")
-        return None
-                    
-        return {"info": info, "can_apply": can_apply, "history": history}
+        
     except Exception as e:
         print(f"   [!] Outing fetch error: {e}")
         return None
 
 async def deleteWeekendOuting(client, booking_id):
     """Deletes a pending weekend outing request."""
-    import time
     url = "https://vtop.vitap.ac.in/vtop/hostel/deleteBookingInfo"
     payload = {
         "BookingId": booking_id,
@@ -1190,42 +1192,83 @@ async def deleteWeekendOuting(client, booking_id):
     except Exception as e: return False, str(e)
 
 async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact):
-    from bs4 import BeautifulSoup
     import time
-    
-    submit_url = "https://vtop.vitap.ac.in/vtop/hostel/saveOutingForm"
+    from bs4 import BeautifulSoup
     
     try:
-        # 1. The exact headers from your browser
-        headers = {
+        # --- 1. THE PRE-SCRAPER: Fetch the form to get the hidden user data ---
+        form_url = "https://vtop.vitap.ac.in/vtop/hostel/StudentWeekendOuting"
+        current_user = getattr(client, "username", "")
+        csrf = getattr(client, "csrf_token", "")
+        
+        headers_form = {
+            "X-Requested-With": "XMLHttpRequest", 
+            "Referer": "https://vtop.vitap.ac.in/vtop/content"
+        }
+        
+        # Ping the page to load the HTML form
+        form_res = await client._client.post(
+            form_url, 
+            data={"authorizedID": current_user, "_csrf": csrf}, 
+            headers=headers_form
+        )
+        soup = BeautifulSoup(form_res.text, 'html.parser')
+
+        # Helper function to dig out the hidden <input> values
+        def get_val(field_name):
+            elem = soup.find('input', {'id': field_name}) or soup.find('input', {'name': field_name})
+            return elem.get('value', '') if elem else ''
+
+        # Build the dynamic dictionary for whoever is currently logged in
+        profile_data = {
+            "name": get_val("name"),
+            "applicationNo": get_val("applicationNo"),
+            "gender": get_val("gender"),
+            "hostelBlock": get_val("hostelBlock"),
+            "roomNo": get_val("roomNo"),
+            "parentContactNumber": get_val("parentContactNumber")
+        }
+
+        # Security check: If VTOP didn't give us an Application No, the form is broken or blocked
+        if not profile_data.get("applicationNo"):
+            return False, "Failed to scrape hidden profile data from VTOP. (Are you eligible for an outing?)"
+            
+        # --- 2. THE DYNAMIC PAYLOAD ---
+        submit_url = "https://vtop.vitap.ac.in/vtop/hostel/saveOutingForm"
+        
+        headers_submit = {
             "X-Requested-With": "XMLHttpRequest",
             "Origin": "https://vtop.vitap.ac.in",
             "Referer": "https://vtop.vitap.ac.in/vtop/content?",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
-        
-        # 2. BYPASSING THE FORM: Injecting the exact data from your curl command
+
+        # Injecting the dynamic variables so anyone can use it
         multipart_payload = {
-            "authorizedID": (None, "24BCE7058"),
+            "authorizedID": (None, current_user),
             "BookingId": (None, ""), 
-            "regNo": (None, "24BCE7058"),
-            "name": (None, "PHANIHARAM VENKATA RAMANUJA MANIDEEP"),
-            "applicationNo": (None, "2024028731"),
-            "gender": (None, "MALE"),
-            "hostelBlock": (None, "MH-2"),
-            "roomNo": (None, "204"),
+            "regNo": (None, current_user),
+            "name": (None, profile_data.get('name', '')),
+            "applicationNo": (None, profile_data.get('applicationNo', '')),
+            "gender": (None, profile_data.get('gender', '')),
+            "hostelBlock": (None, profile_data.get('hostelBlock', '')),
+            "roomNo": (None, profile_data.get('roomNo', '')),
             "outPlace": (None, place),
             "purposeOfVisit": (None, purpose),
             "outingDate": (None, out_d),
             "outTime": (None, out_t),
             "contactNumber": (None, contact),
-            "parentContactNumber": (None, "8096999391"),
-            "_csrf": (None, getattr(client, "csrf_token", "")),
-            "x=": (None, time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime()))
+            "parentContactNumber": (None, profile_data.get('parentContactNumber', '')),
+            "_csrf": (None, csrf),
+            "x": (None, time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime()))
         }
             
-        print("   [.] Sending Direct Payload...")
-        res_submit = await client._client.post(submit_url, files=multipart_payload, headers=headers)
+        print("   [.] Sending Dynamic Payload...")
+        res_submit = await client._client.post(
+            submit_url, 
+            files=multipart_payload, 
+            headers=headers_submit
+        )
         submit_soup = BeautifulSoup(res_submit.text, 'html.parser')
         
         success_msg = submit_soup.find('input', {'id': 'success'})
