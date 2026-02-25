@@ -42,7 +42,7 @@ from services import (
 )
 console = Console()
 # --- CONFIGURATION ---
-CURRENT_VERSION = "2.0"
+CURRENT_VERSION = "2.1"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
@@ -1264,14 +1264,14 @@ async def main():
                                 continue
                                 
                             # HANDLE DELETION
-                            elif act == 'D':
+                            elif act.upper() == 'D':
                                 try:
                                     idx = int(input("   Enter Row # to delete: ")) - 1
                                     if 0 <= idx < len(history):
                                         item = history[idx]
                                         if "Wait" in item['status'] or "Pending" in item['status']:
-                                            if item['booking_id']:
-                                                confirm = input(f"   Delete request for {item['place']}? (y/n): ")
+                                            if item.get('booking_id'):
+                                                confirm = input(f"   Delete request for {item.get('place', 'this location')}? (y/n): ")
                                                 if confirm.lower() == 'y':
                                                     res, msg = await deleteWeekendOuting(client, item['booking_id'])
                                                     if res: 
@@ -1280,6 +1280,8 @@ async def main():
                                                         history = data.get('history', [])
                                                     else:   
                                                         print(f"   ❌ {msg}")
+                                            else:
+                                                print("   [!] Error: No booking ID found for this request.")
                                         else:
                                             print("   [!] Cannot delete active/processed requests.")
                                     else:
