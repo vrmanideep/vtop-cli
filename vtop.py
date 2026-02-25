@@ -31,6 +31,7 @@ from services import (
     get_credentials,
     fetchGeneralOuting,
     submitGeneralOuting,
+    deleteGeneralOuting,
     download_g_outpass,
     fetchWeekendOuting,
     submitWeekendOuting,
@@ -1096,7 +1097,7 @@ async def main():
                                          if item['booking_id']:
                                              confirm = input(f"   Delete request for {item['place']}? (y/n): ")
                                              if confirm.lower() == 'y':
-                                                 res, msg = await fetchGeneralOuting(client, item['booking_id'])
+                                                 res, msg = await deleteGeneralOuting(client, item['booking_id'])
                                                  if res: print(f"   ✅ {msg}")
                                                  else:   print(f"   ❌ {msg}")
                                     else:
