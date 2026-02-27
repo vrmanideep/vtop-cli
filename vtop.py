@@ -42,7 +42,7 @@ from services import (
 )
 console = Console()
 # --- CONFIGURATION ---
-CURRENT_VERSION = "2.1"
+CURRENT_VERSION = "2.2"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
@@ -789,7 +789,7 @@ async def main():
 
                             while True:
                                 print("\n   ACTIONS:")
-                                print("   [1, 2..] Enter S.No to download a specific lecture")
+                                print("   [1, 2..] Enter S.No(s) to download (e.g., 18, 21, 23)")
                                 print("   [G1, G2] Enter G1, G2.. to download General Material")
                                 print("   [A]      Download ALL materials (Skips existing files)")
                                 print("   [0]      Back to Subject List") 
@@ -797,6 +797,12 @@ async def main():
                                 dl_choice = input("\n   Choice: ").strip().upper()
                                 if dl_choice == '0': break 
                                 
+                                # --- Helper for Date Formatting ---
+                                def get_short_date(date_str):
+                                    if not date_str: return "UnknownDate"
+                                    parts = date_str.split('-')
+                                    return f"{parts[0]}-{parts[1]}" if len(parts) >= 2 else date_str
+
                                 # --- 1. Download ALL ---
                                 if dl_choice == 'A':
                                     count = 0
@@ -805,14 +811,14 @@ async def main():
                                     
                                     # Download Lectures
                                     for lec in c_page['lectures']:
-                                        # Sanitize the topic so Windows/Mac doesn't crash on bad characters
-                                        safe_topic = re.sub(r'[\\/*?:"<>|]', "", lec['topic'])[:50]
+                                        short_date = get_short_date(lec.get('date', ''))
+                                        safe_topic = re.sub(r'[\\/*?:"<>|]', "", lec['topic']).strip()
                                         
                                         # 1. Main Lecture
                                         if lec.get('download_path'):
-                                            fname = f"{selected_code}_{safe_topic}"
+                                            fname = f"{short_date}_{selected_code}_{safe_topic}"
                                             if check_exists(fname):
-                                                print(f"   [-] Skipped (Already exists): {fname[:50]}...")
+                                                print(f"   [-] Skipped (Exists): {fname[:60]}...")
                                                 skipped += 1
                                             else:
                                                 res, _ = await download_course_material(client, lec['download_path'], save_dir, fname)
@@ -820,9 +826,9 @@ async def main():
                                                 
                                         # 2. Reference Materials
                                         for r_idx, r_path in enumerate(lec.get('ref_paths', [])):
-                                            fname = f"{selected_code}_{safe_topic}_Ref_{r_idx+1}"
+                                            fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
                                             if check_exists(fname):
-                                                print(f"   [-] Skipped (Already exists): {fname[:50]}...")
+                                                print(f"   [-] Skipped (Exists): {fname[:60]}...")
                                                 skipped += 1
                                             else:
                                                 res, _ = await download_course_material(client, r_path, save_dir, fname)
@@ -833,13 +839,13 @@ async def main():
                                             print(f"\n   [🔗] Web Links for: {lec['topic'][:50]}...")
                                             for link in lec['web_links']:
                                                 print(f"        -> {link}")
-                                            print("") # Spacer
+                                            print("") 
                                             
                                     # Download General Materials
                                     for i, gen in enumerate(c_page.get('general', [])):
                                         fname = format_general_name(selected_code, gen['title'], i+1)
                                         if check_exists(fname):
-                                            print(f"   [-] Skipped (Already exists): {fname[:50]}...")
+                                            print(f"   [-] Skipped (Exists): {fname[:60]}...")
                                             skipped += 1
                                         else:
                                             res, _ = await download_course_material(client, gen['download_path'], save_dir, fname)
@@ -858,7 +864,7 @@ async def main():
                                             if check_exists(fname):
                                                 print(f"   [-] File already exists in Downloads: {fname}")
                                             else:
-                                                print(f"   [.] Downloading {fname}...")
+                                                print(f"   [.] Downloading {fname[:60]}...")
                                                 res, filepath = await download_course_material(client, item['download_path'], save_dir, fname)
                                                 if res: print(f"   [✓] Saved to: {filepath}")
                                                 else: print(f"   [x] Failed: {filepath}")
@@ -867,34 +873,36 @@ async def main():
                                     except ValueError: 
                                         print("   [!] Invalid input format. Use G1, G2, etc.")
 
-                                # --- 3. Download Specific Lecture ---
-                                elif dl_choice.isdigit():
-                                    try:
-                                        target_sno = int(dl_choice)
+                                # --- 3. Download Specific Lecture(s) (Handles comma separated lists) ---
+                                elif all(part.strip().isdigit() for part in dl_choice.split(',')):
+                                    choices = [x.strip() for x in dl_choice.split(',')]
+                                    
+                                    for choice in choices:
+                                        target_sno = int(choice)
                                         target_lec = next((l for l in c_page['lectures'] if l['s_no'] == target_sno), None)
                                         
                                         if target_lec:
-                                            # Strip bad characters for the filename, but let it be long
-                                            safe_topic = re.sub(r'[\\/*?:"<>|]', "", target_lec['topic'])[:50]
+                                            short_date = get_short_date(target_lec.get('date', ''))
+                                            safe_topic = re.sub(r'[\\/*?:"<>|]', "", target_lec['topic']).strip()
                                             downloads_started = False
                                             
                                             # 1. Download Main File
                                             if target_lec.get('download_path'):
                                                 downloads_started = True
-                                                fname = f"{selected_code}_{safe_topic}"
+                                                fname = f"{short_date}_{selected_code}_{safe_topic}"
                                                 if check_exists(fname): 
-                                                    print(f"   [-] Main file already exists: {fname}")
+                                                    print(f"   [-] Main file already exists: {fname[:60]}...")
                                                 else:
-                                                    print(f"   [.] Downloading Main: {fname}...")
+                                                    print(f"   [.] Downloading Main: {fname[:60]}...")
                                                     res, filepath = await download_course_material(client, target_lec['download_path'], save_dir, fname)
                                                     if res: print(f"   [✓] Saved: {filepath}")
                                                     
                                             # 2. Download Reference Files
                                             for r_idx, r_path in enumerate(target_lec.get('ref_paths', [])):
                                                 downloads_started = True
-                                                fname = f"{selected_code}_{safe_topic}_Ref_{r_idx+1}"
+                                                fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
                                                 if check_exists(fname): 
-                                                    print(f"   [-] Reference file already exists: {fname}")
+                                                    print(f"   [-] Reference file already exists: {fname[:60]}...")
                                                 else:
                                                     print(f"   [.] Downloading Reference {r_idx+1}...")
                                                     res, filepath = await download_course_material(client, r_path, save_dir, fname)
@@ -903,23 +911,20 @@ async def main():
                                             # 3. Print Web Links to CLI
                                             if target_lec.get('web_links'):
                                                 downloads_started = True
-                                                print(f"\n   [🔗] Web Links for this lecture:")
+                                                print(f"\n   [🔗] Web Links for Lecture {target_sno}:")
                                                 for link in target_lec['web_links']:
                                                     print(f"        -> {link}")
                                                     
                                             # If literally nothing was there
                                             if not downloads_started:
-                                                print("   [!] No materials available for this lecture.")
+                                                print(f"   [!] No materials available for Lecture {target_sno}.")
                                                 
                                         else:
-                                            print("   [!] Invalid Lecture S.No.")
-                                    except ValueError: 
-                                        print("   [!] Invalid number.")
-                                        
+                                            print(f"   [!] Lecture S.No {target_sno} not found.")
+                                            
                                 # --- 4. Catch-all ---
                                 else:
-                                    print("   [!] Invalid command. Type a number, G#, or A.")
-
+                                    print("   [!] Invalid command. Type a number, multiple numbers separated by commas, G#, or A.")
                         else:
                             print("   [!] Invalid selection.")
                     except ValueError:
