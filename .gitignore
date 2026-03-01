@@ -3,6 +3,7 @@
 downloads/
 VTOP_Downloads/
 token.txt
+credentials.txt
 # --- Python ---
 __pycache__/
 *.py[cod]
