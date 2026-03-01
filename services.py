@@ -2,6 +2,7 @@ import time
 import os
 import re
 import sys
+import getpass
 import asyncio
 import httpx
 from datetime import datetime as dt
@@ -12,27 +13,51 @@ from vitap_vtop_client.client import VtopClient
 def get_cred(file_path="credentials.txt"):
     """
     Reads username from line 1 and password from line 2.
+    If the file is missing or invalid, prompts the user to create it interactively.
     """
-    try:
+    # 1. Try to read existing credentials quietly
+    if os.path.exists(file_path):
         with open(file_path, "r") as f:
             lines = [line.strip() for line in f.readlines() if line.strip()]
             
-            if len(lines) < 2:
-                print("[!] Error: credentials.txt must have at least 2 lines (User and Pass).")
-                sys.exit(1)
+            # If the file exists and is perfectly valid, return them instantly
+            if len(lines) >= 2:
+                return lines[0], lines[1]
+            else:
+                print(f"\n   [!] {file_path} is corrupted (needs 2 lines). Let's fix it.")
 
-            username = lines[0]
-            password = lines[1]
+    # 2. First-Time Setup Wizard (Triggered if file is missing or broken)
+    print("\n   =======================================")
+    print("   🚀 FIRST TIME SETUP: VTOP CLI")
+    print("   =======================================")
+    print(f"   Let's set up your {file_path} file securely.\n")
+    
+    while True:
+        username = input("   👉 Enter Registration Number (e.g., 24BCE7058): ").strip().upper()
+        password = getpass.getpass("   👉 Enter VTOP Password (typing will be hidden): ").strip()
+        
+        if not username or not password:
+            print("   [!] Fields cannot be empty. Try again.\n")
+            continue
+
+        print("\n   --- Verify Your Details ---")
+        print(f"   Registration No: {username}")
+        print(f"   Password:        {'*' * len(password)}")
+        
+        confirm = input("\n   Save these credentials and login? (y/n): ").strip().lower()
+        
+        if confirm == 'y':
+            with open(file_path, "w") as f:
+                f.write(f"{username}\n{password}\n")
+            print(f"   [✓] {file_path} created successfully!\n")
             return username, password
-            
-    except FileNotFoundError:
-        print(f"[!] Error: {file_path} not found.")
-        sys.exit(1)
+        else:
+            print("   [!] Setup cancelled. Let's try typing that again.\n")
 
 # Alias for compatibility
 get_credentials = get_cred
 
-# Global Creds (Used as fallback)
+# Global Creds (This will now seamlessly trigger the setup wizard on the very first run!)
 a, password = get_cred("credentials.txt")
 
 # 🛠️ SSL BYPASS
