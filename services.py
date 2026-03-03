@@ -5,6 +5,7 @@ import sys
 import getpass
 import asyncio
 import httpx
+import pwinput
 from datetime import datetime as dt
 from typing import List, Dict, Any, Tuple
 from bs4 import BeautifulSoup
@@ -26,7 +27,7 @@ def get_cred(file_path="credentials.txt"):
             else:
                 print(f"\n   [!] {file_path} is corrupted (needs 2 lines). Let's fix it.")
 
-    # 2. First-Time Setup Wizard (Triggered if file is missing or broken)
+    # 2. First-Time Setup Wizard
     print("\n   =======================================")
     print("   🚀 FIRST TIME SETUP: VTOP CLI")
     print("   =======================================")
@@ -34,7 +35,10 @@ def get_cred(file_path="credentials.txt"):
     
     while True:
         username = input("   👉 Enter Registration Number (e.g., 24BCE7058): ").strip().upper()
-        password = getpass.getpass("   👉 Enter VTOP Password (typing will be hidden): ").strip()
+        
+        # --- THE MAGIC HAPPENS HERE ---
+        # This replaces getpass and shows asterisks as they type!
+        password = pwinput.pwinput(prompt="   👉 Enter VTOP Password: ", mask="*").strip()
         
         if not username or not password:
             print("   [!] Fields cannot be empty. Try again.\n")
@@ -57,7 +61,7 @@ def get_cred(file_path="credentials.txt"):
 # Alias for compatibility
 get_credentials = get_cred
 
-# Global Creds (This will now seamlessly trigger the setup wizard on the very first run!)
+# Global Creds
 a, password = get_cred("credentials.txt")
 
 # 🛠️ SSL BYPASS
