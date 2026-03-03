@@ -28,7 +28,7 @@ cd vtop-main
 pip install -r requirements.txt
 ```
 ### 3. 🔑 Configuration
-To log in automatically, edit the file named credentials.txt in the root directory. Create one if it does not exist. Make sure the name is `credentials.txt`
+Run `python vtop.py`. If you are a first time user, the CLI will prompt you for your login credentials. It will save the credentials in a file `credentials.txt`, which will be used to login from the next time.
 
 Format:
 * **Line 1:** Your Registration Number (e.g., 24BCExxxx)
