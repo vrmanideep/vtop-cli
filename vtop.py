@@ -43,7 +43,7 @@ from services import (
 )
 console = Console()
 # --- CONFIGURATION ---
-CURRENT_VERSION = "2.2"
+CURRENT_VERSION = "3.0"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
