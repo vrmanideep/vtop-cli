@@ -1,3 +1,40 @@
+import os
+import sys
+import subprocess
+
+# --- 1. THE AUTO-BOOTSTRAPPER ---
+def check_dependencies():
+    try:
+        # Try to load the 3rd party packages your app relies on
+        import bs4
+        import httpx
+        import pwinput
+        # (If you added any other libraries to requirements.txt, list them here)
+    except ImportError as e:
+        print(f"\n   [!] Missing required module: {e.name}")
+        print("   [.] Running First-Time Setup: Installing dependencies...")
+        print("   [.] This will only happen once. Please wait...\n")
+        
+        try:
+            # Silently run: pip install -r requirements.txt
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"]
+            )
+            print("\n   [✓] Dependencies installed successfully!")
+            print("   [🚀] Launching VTOP CLI...\n")
+            
+            # Magically restart the Python script so it can use the new modules!
+            os.execv(sys.executable, ['python'] + sys.argv)
+            
+        except subprocess.CalledProcessError:
+            print("\n   [x] Auto-install failed.")
+            print("   [!] Please run 'pip install -r requirements.txt' manually.")
+            sys.exit(1)
+
+# Run the check before the rest of the file even loads
+check_dependencies()
+
+# --- 2. YOUR NORMAL IMPORTS GO HERE ---
 import argparse
 import asyncio
 import json
@@ -13,34 +50,8 @@ import urllib.request
 from rich.console import Console
 from datetime import datetime as dt 
 from vitap_vtop_client.client import VtopClient
+from services import *
 
-from services import (
-    vtopClientLogin,
-    fetchSemesters,
-    fetchAttendance,
-    fetchAttendanceDetail,
-    fetchMarks,
-    fetchTimetable,
-    fetchExamSchedule,
-    fetchGradeHistory,
-    fetchProfile,
-    fetchCredits,
-    fetchCoursePage,
-    fetchCourseList, 
-    fetchCourseClasses,
-    download_course_material, 
-    get_credentials,
-    fetchGeneralOuting,
-    submitGeneralOuting,
-    deleteGeneralOuting,
-    download_g_outpass,
-    fetchWeekendOuting,
-    submitWeekendOuting,
-    deleteWeekendOuting,
-    download_w_outpass,
-    fetchDACourseList,
-    fetchDADetails
-)
 console = Console()
 # --- CONFIGURATION ---
 CURRENT_VERSION = "3.0"

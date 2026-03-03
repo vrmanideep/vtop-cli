@@ -13,6 +13,7 @@ pydantic
 # Required for handling captcha images in the client
 pillow
 numpy
+pwinput
 
 # --- Optional/Dev ---
 # Useful if you plan to build/distribute the package later

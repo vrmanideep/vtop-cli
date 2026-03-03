@@ -34,7 +34,7 @@ def get_cred(file_path="credentials.txt"):
     print(f"   Let's set up your {file_path} file securely.\n")
     
     while True:
-        username = input("   👉 Enter Registration Number (e.g., 24BCE7058): ").strip().upper()
+        username = input("   👉 Enter Registration Number (e.g., 21BCExxxx): ").strip().upper()
         
         # --- THE MAGIC HAPPENS HERE ---
         # This replaces getpass and shows asterisks as they type!
