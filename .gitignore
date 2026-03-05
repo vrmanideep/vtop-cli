@@ -8,6 +8,7 @@ credentials.txt
 __pycache__/
 *.py[cod]
 *$py.class
+testing_venv
 
 # --- Virtual Environments ---
 venv/
