@@ -23,11 +23,8 @@ Or Download and extract the zip file
 https://github.com/vrmanideep/vtop/archive/refs/heads/main.zip
 cd vtop-main
 ```
-### 2. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-### 3. 🔑 Configuration
+
+### 2. 🔑 Configuration
 Run `python vtop.py`. If you are a first time user, the CLI will prompt you for your login credentials. It will save the credentials in a file `credentials.txt`, which will be used to login from the next time.
 
 Format:
