@@ -1,6 +1,7 @@
 from typing import List
 from pydantic import BaseModel, RootModel
 
+
 class ExamEntry(BaseModel):
     serial_number: str
     course_code: str
@@ -16,9 +17,11 @@ class ExamEntry(BaseModel):
     seat_location: str
     seat_number: str
 
+
 class ExamScheduleGroup(BaseModel):
     exam_type: str
     subjects: List[ExamEntry]
+
 
 class ExamScheduleModel(RootModel[List[ExamScheduleGroup]]):
     pass

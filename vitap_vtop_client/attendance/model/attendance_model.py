@@ -1,5 +1,3 @@
-
-#vitap_vtop_client\attendance\model\attendance_model.py
 from pydantic import BaseModel
 class AttendanceModel(BaseModel):
     course_id : str

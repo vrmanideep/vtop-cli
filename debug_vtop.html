@@ -1,0 +1,357 @@
+
+<!DOCTYPE html>
+<!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
+<!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
+<!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
+<!--[if gt IE 8]>      <html class="no-js"> <![endif]-->
+<html>
+
+<head id="configHead">
+    
+
+        <meta charset="utf-8">
+        <base href="https://vtop.vitap.ac.in/vtop/" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>VIT-AP - VTOP</title>
+        <meta name="description" content="">
+        <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport" />
+        <meta charset="ISO-8859-1">
+        <meta name="description" content="vtop" />
+        <meta name="robots" content="NOODP,NOYDIR" />
+        <meta name="keywords" content=" vtop " />
+        <meta name="robots" content="index, follow" />
+        <link rel="icon" type="image/png" href="assets/img/favicon.ico">
+        <meta http-equiv="cache-control" content="max-age=0" />
+        <meta http-equiv="cache-control" content="no-cache" />
+        <meta http-equiv="expires" content="0" />
+        <meta http-equiv="X-UA-Compatible" content="IE-Edge" />
+    
+    
+        <link rel="stylesheet" type="text/css" href="/vtop/get/bs/css/1">
+        <link rel="stylesheet" type="text/css" href="/vtop/assets/css/bootstrap3-iso.css" />
+        <link rel="stylesheet" type="text/css" href="/vtop/get/ic/css/1">
+        <link rel="stylesheet" type="text/css" href="/vtop/get/ic/css/2">
+        <link rel="stylesheet" type="text/css" href="/vtop/get/jq/css/1">
+        <link rel="stylesheet" type="text/css" href="/vtop/get/bs/css/2">
+        <link rel="stylesheet" type="text/css" href="/vtop/assets/css/menu.css" />
+        <link rel="stylesheet" type="text/css" href="/vtop/assets/css/AdminLteCompatibility.css" />
+        <link rel="stylesheet" type="text/css" href="/vtop/assets/css/scrollableTable.css" />
+        <link rel="stylesheet" type="text/css" href="/vtop/assets/css/VTop.css" />
+        <script type="text/javascript" src="/vtop/get/jq/js/1"></script>
+
+    
+</head>
+
+<body class="overflow-auto">
+
+    <input type="hidden" name="authorizedIDX" id="authorizedIDX"
+        value="24BCE7058" />
+
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-xs-12  trim vh-100 vw-100 " id="page_outline">
+                
+                    <div id="page-holder">
+                        
+        <script>
+            /*<![CDATA[*/
+
+            var csrfName = "_csrf";
+            var csrfValue = "644ad47f-89b6-4256-88d5-5f7a6b35b56d";
+            var id ="24BCE7058";
+            var now = new Date();
+            var params = csrfName + "=" + csrfValue + "&authorizedID=" + id + "&x=" + now.toUTCString();
+
+            function home() {
+                ajaxCall("/vtop/home", params, "page_outline");
+            }
+
+            /*]]>*/
+        </script>
+        <nav class="navbar navbar-expand-lg py-0 navbar-light bg-light headerBackgroundColor fixed-top shadow"
+            id="vtopHeader">
+            <div class="container-fluid ms-0 ps-2">
+                <button class="btn btn-sm bg-transparent d-none d-sm-block ms-0" type="button"
+                    data-bs-toggle="offcanvas" data-bs-target="#expandedSideBar" aria-controls="offcanvasExample">
+                    <span class="text-light h4">&#9776; </span>
+                </button>
+                <button class="btn btn-sm bg-transparent d-block d-sm-none ms-0" type="button"
+                    onclick="javascript:getButtonBar();">
+                    <span class="text-light h4">&#9776; </span>
+                </button>
+                <!-- <a class="navbar-brand px-0 pe-sm-1 mx-0 mx-sm-1" href="javacript:void(0);">
+                    <img th:src="@{/assets/img/VITLogoEmblem.png}" class="img-responsive VITEmblem" alt="" />
+                </a> -->
+                
+                <a class="navbar-brand" href="javacript:void(0);">
+                    <img src="/vtop/assets/img/VIT_AP_logo.png" width='170px' alt="" />
+                </a>
+                
+                <!-- <a class="navbar-brand VITLogoStyle px-0 mx-0 text-light" href="javacript:void(0);"><span
+                        class="h1 fw-bold">VIT</span>
+                </a>
+                <span class="navbar-text px-0 px-sm-2 mx-0 mx-sm-1 text-light">(AP Campus)</span> -->
+                
+                <a class="navbar-text" href="javascript:void(0);" onclick="javascript:home();"><i
+                        class="bi bi-house-door text-light ps-sm-3 h4" aria-hidden="true"></i></a>
+                <a class="navbar-text" href="javascript:void(0);" id="printVTOPCoreDocument"><i
+                        class="bi bi-printer text-light ps-sm-3 h4" aria-hidden="true"></i></a>
+
+                <button class="navbar-toggler mx-0 px-0" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#vtopHeaderBarControl" aria-controls="vtopHeaderBarControl" aria-expanded="false"
+                    aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+
+                <div class="collapse navbar-collapse" id="vtopHeaderBarControl">
+                    <div class="d-inline-block me-auto" id="quickLinks">
+                        
+                            <button class="btn btn-sm btn-outline ps-3 " data-bs-toggle="tooltip"
+                                data-bs-placement="top" title="add this menu to favourites" id="favouriteBtn"><span
+                                    class="text-light">
+                                    <i class="bi bi-star h4"></i>
+                                    
+                                    </span></button>
+                            <div class="dropdown d-inline-block">
+                                <button class="btn btn-outline-primary btn-sm dropdown-toggle text-light" type="button"
+                                    data-bs-toggle="dropdown" aria-expanded="false">
+                                    <span class="text-light">Quick Links</span>
+                                </button>
+                                <ul class="dropdown-menu">
+                                    
+        
+    
+                                </ul>
+                            </div>
+                            <script type="text/javascript" src="/vtop/assets/js/favourite.js"></script>
+                            
+                        
+                    </div>
+                    <strong class="mx-auto fw-bold text-light bg-danger"></strong>
+                    <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+                        <li class="nav-item d-none d-sm-inline-block">
+                            <img src="/vtop/users/image/?id=24BCE7058" class="img-circle img_icon_size"
+                                alt="User Image" />
+                        </li>
+                        <li class="nav-item dropdown d-none d-sm-inline-block">
+                            <a class="nav-link dropdown-toggle text-light" href="javascript:void(0);"
+                                id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <span class="navbar-text text-light small fw-bold">24BCE7058 (STUDENT)</span>
+                            </a>
+                            <ul class="dropdown-menu dropdown-menu-end headerBackgroundColor dropdownMenuBoxWidth"
+                                aria-labelledby="navbarDropdown">
+                                <li class="dropdown-item disabled text-center"><img
+                                        src="/vtop/users/image/?id=24BCE7058"
+                                        class="img-circle img_stamp_size" alt="User Image" /></li>
+                                <li class="dropdown-item disabled text-center"><span class="dropdown-item text-light"></li>
+                                <li>
+                                    <hr class="dropdown-divider">
+                                </li>
+                                <li class="dropdown-item bg-transparent">
+                                    <form class="text-center" id="logoutForm1" name="logoutForm1" method="post"
+                                        action="/vtop/logout"><input type="hidden" name="_csrf" value="644ad47f-89b6-4256-88d5-5f7a6b35b56d"/>
+                                        <input type="hidden" name="_csrf"
+                                            value="644ad47f-89b6-4256-88d5-5f7a6b35b56d" />
+                                        <input type="hidden" name="authorizedID" id="authorizedID"
+                                            value="24BCE7058" />
+                                        <div class="d-grid gap-2">
+                                            
+                                                <button class="btn btn-sm btn-info" id="historyBtn1" type="button">Login History</button>
+                                                
+                                            
+                                            <button class="btn btn-success " type="submit">Sign out</button>
+                                            
+                                        </div>
+                                    </form>
+                                </li>
+                            </ul>
+                        </li>
+                        <li class="nav-item disabled text-center  d-block d-sm-none"><img
+                                src="/vtop/users/image/?id=24BCE7058" class="img-circle img_stamp_size"
+                                alt="User Image" /></li>
+                        <li class="nav-item disabled text-center d-block d-sm-none"><span
+                                class="dropdown-item text-light"></li>
+                        <li class="nav-item disabled text-center d-block d-sm-none">
+                            <span class="navbar-text text-light small fw-bold">24BCE7058 (STUDENT)</span>
+                        </li>
+                        <li class="nav-item bg-transparent d-block d-sm-none">
+                            <form class="text-center" id="logoutForm1" name="logoutForm1" method="post" `
+                                action="/vtop/logout"><input type="hidden" name="_csrf" value="644ad47f-89b6-4256-88d5-5f7a6b35b56d"/>
+                                <input type="hidden" name="_csrf" value="644ad47f-89b6-4256-88d5-5f7a6b35b56d" />
+                                <input type="hidden" name="authorizedID" id="authorizedID"
+                                    value="24BCE7058" />
+                                <div class="d-grid gap-2">
+                                    
+                                        <button class="btn btn-sm btn-info" id="historyBtn" type="button">Login History</button>
+                                        
+                                    
+                                    <button class="btn btn-sm btn-success " type="submit">Sign out</button>
+                                    
+                                </div>
+                            </form>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+        <script type="text/javascript" src="/vtop/assets/js/vtopheader.js"></script>
+    
+                        
+                    </div>
+
+                    <div>
+                        <script>
+                            /*<![CDATA[*/
+
+                            $(document).ready(function () {
+
+                                var now = new Date();
+                                var id ="24BCE7058";
+                                var url ="check\/expired\/password";
+                                var csrfName = "_csrf";
+                                var csrfValue = "644ad47f-89b6-4256-88d5-5f7a6b35b56d";
+                                params = "authorizedID=" + id + "&" + csrfName + "=" + csrfValue + "&x=" + now.toUTCString();
+                                ajaxDynamicTargetCall(url, params, "page-holder");
+                            })
+
+                            /*]]>*/
+                        </script>
+                    </div>
+                    
+                    
+
+        <div class="row noshow" id="popup">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="h6 fw-bold">Loading... Please Wait</span>
+                    </div>
+                    <div class="card-body">
+                        <img src="assets/gif/ajax-loader_bert.gif" class="img-fluid" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    
+                
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-12" id="messageBox">
+
+            </div>
+        </div>
+    </div>
+    
+    
+
+        <div class="modal" id="myModalFooter" role="dialog">
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+                <!-- Modal content-->
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-bs-dismiss="modal">&times;</button>
+                        <h4 class="modal-title text-primary">Sorry !!!</h4>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-danger"> This page is under Construction !!! Please try later</p>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-default" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <div class="modal b3ModalLayer" id="accessDeniedModal" data-bs-backdrop="static" data-bs-keyboard="false"
+            tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-sm b3ModalLayer">
+                <div class="modal-content b3ModalLayer">
+                    <div class="modal-header">
+                        <h4 class="modal-title text-primary" id="staticBackdropLabel">Sorry !!!</h4>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <h3 class="text-danger"> Access Denied</h3>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-danger" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+        <script type="text/javascript" src="/vtop/get/ms/js/1"></script> <!--moment.js -->
+        <script type="text/javascript" src="/vtop/get/jq/js/2"></script> <!-- jquery hotkey-->
+        <script type="text/javascript" src="/vtop/get/jq/js/3"></script> <!--  block ui -->
+        <script type="text/javascript" src="/vtop/get/jq/js/4"></script> <!--  jquery ui -->
+        <script type="text/javascript" src="/vtop/get/bs/js/3"></script> <!-- bootstrap.bundle min 5.0.1 -->
+        <script type="text/javascript" src="/vtop/assets/js/custom-bootstrap.js"></script>
+
+
+
+        <script type="text/javascript" src="/vtop/get/bs/js/1"></script> <!-- bootstrapvalidator.js -->
+        <script type="text/javascript" src="/vtop/assets/js/vtop-validation.js"></script>
+        <script type="text/javascript" src="/vtop/assets/js/vit-custom.js"></script>
+        <script type="text/javascript" src="/vtop/assets/js/validate2.js"></script>
+        <script type="text/javascript" src="/vtop/assets/js/pdf.js"></script>
+        <script type="text/javascript" src="/vtop/assets/js/app.js"></script>
+
+
+
+        <script>
+            /*<![CDATA[*/
+
+            $(document).ready(function () {
+                var offsetHeight = document.getElementById('vtopHeader').offsetHeight;
+                document.body.style.paddingTop = offsetHeight + 'px';
+                const historyBtn=document.getElementById("historyBtn");
+                const historyBtn1=document.getElementById("historyBtn1");
+                historyBtn.addEventListener("click", showHistory);
+                historyBtn1.addEventListener("click", showHistory);
+            });
+
+
+            function showHistory() {
+                let csrfName = "_csrf";
+                let csrfValue = "644ad47f-89b6-4256-88d5-5f7a6b35b56d";
+                let id ="24BCE7058";
+                let params = "authorizedID=" + id + "&" + csrfName + "=" + csrfValue + "&x=" + now.toUTCString();
+                ajaxB5Call("show/login/history",params,"b5-pagewrapper");
+                historyBtn1.addEventListener("click", showHistory);
+            }
+
+            function vtopDownload(urlText, dataToSend) {
+
+                var params = null;
+                var csrfName = "_csrf";
+                var csrfValue = "644ad47f-89b6-4256-88d5-5f7a6b35b56d";
+                var id ="24BCE7058";
+                var now = new Date();
+                if (dataToSend === 'null' || dataToSend === undefined || dataToSend === null || dataToSend === '') {
+                    params = "authorizedID=" + id + "&" + csrfName + "=" + csrfValue + "&x=" + now.toUTCString();
+                } else {
+                    params = dataToSend + "&" + csrfName + "=" + csrfValue + "&authorizedID=" + id + "&x=" + now.toUTCString();
+                }
+
+                window.open(urlText + '?' + params);
+                $.unblockUI();
+            }
+
+
+            history.pushState(null, null, document.URL);
+            window.addEventListener('popstate', function () {
+                history.pushState(null, null, document.URL);
+            });
+
+
+            /*]]>*/
+        </script>
+
+        
+
+</body>
+
+</html>

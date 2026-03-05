@@ -2,7 +2,6 @@ import os
 import sys
 import subprocess
 
-# --- 1. THE AUTO-BOOTSTRAPPER ---
 def check_dependencies():
     try:
         # Try to load the 3rd party packages your app relies on
@@ -31,11 +30,10 @@ def check_dependencies():
             print("   [!] Please run 'pip install -r requirements.txt' manually.")
             sys.exit(1)
 
-# Run the check before the rest of the file even loads
 check_dependencies()
 
-# --- 2. YOUR NORMAL IMPORTS GO HERE ---
 import argparse
+import requests
 import asyncio
 import json
 import time
@@ -59,40 +57,36 @@ REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
 def check_for_updates():
+    import urllib.request
     # 1. Subtle check message
     print("   [.] Checking for updates...", end="\r") 
     try:
-        # Fetch remote code silently
-        with urllib.request.urlopen(REPO_URL) as response:
+        # Add a strict 2-second timeout to the request
+        with urllib.request.urlopen(REPO_URL, timeout=2) as response:
             remote_code = response.read().decode('utf-8')
+        
         match = re.search(r'CURRENT_VERSION = "(.*?)"', remote_code)
         if match:
             remote_version = match.group(1)
-            # Only wake up if versions mismatch
             if remote_version != CURRENT_VERSION:
-                # Clear the previous line
                 print(" " * 50, end="\r")
                 print(f"   🚨 UPDATE AVAILABLE: v{CURRENT_VERSION} -> v{remote_version}")
                 choice = input("   Download now? (y/n): ").lower().strip()
                 if choice == 'y':
-                    print("   [⬇️] Downloading new update...", end="\r")
-                    # Overwrite vtop.py
+                    print("   [⬇️] Downloading update...", end="\r")
                     with open(__file__, 'w', encoding='utf-8') as f:
                         f.write(remote_code)
-                    # Overwrite services.py
-                    with urllib.request.urlopen(SERVICES_URL) as response:
+                    # Add timeout here too!
+                    with urllib.request.urlopen(SERVICES_URL, timeout=2) as response:
                         services_code = response.read().decode('utf-8')
                     with open("services.py", 'w', encoding='utf-8') as f:
                         f.write(services_code)
-                    print("   ✅ Update complete! Restarting script...  ")
+                    print("   ✅ Update complete! Restarting...             ")
                     sys.exit()
-                else:
-                    print("   [!] Update skipped.")
             else:
-                # If up to date, just clear the line so it looks like nothing happened
                 print(" " * 50, end="\r")
     except Exception:
-        # If internet is down, just fail silently and let the app run
+        # Silently fail if network is slow or down
         print(" " * 50, end="\r")
 
 async def download_material(client, url_suffix, filename):
@@ -565,35 +559,90 @@ async def main():
         reg_no, password = get_credentials("credentials.txt")
         print(f"\n[-] Connecting to V-TOP as {reg_no}...")
         
-        # Open the session
+        login_success = False
+        
+        # 1. Open the session. Everything must happen INSIDE this block.
         async with VtopClient(reg_no, password) as client:
             
-            # If login fails...
-            if not await vtopClientLogin(client):
-                print(f"[!] Login Failed. Incorrect Registration Number or Password.")
-                
-                # Trash the corrupted credentials file
-                if os.path.exists("credentials.txt"):
-                    os.remove("credentials.txt")
-                    
-                print("[-] Trashed bad credentials. Let's try again...\n")
-                continue # Loops back to the top, triggering the Setup Wizard!
+            # --- THE AUTO-REBUILDER LOOP ---
+            for auto_retry in range(1, 4):
+                print(f"   [~] Session Attempt {auto_retry}/3...")
+                try:
+                    if await vtopClientLogin(client):
+                        login_success = True
+                        break # Success! Break the auto-retry loop
+                    else:
+                        print(f"   [!] Attempt {auto_retry} dropped by server. Retrying...")
+                        await asyncio.sleep(2)
+                except Exception as e:
+                    print(f"   [!] Attempt {auto_retry} error: {e}")
+                    await asyncio.sleep(2)
 
-            # --- If Login Succeeds ---
+            # --- MANUAL OVERRIDE (If all 3 auto-retries fail) ---
+            if not login_success:
+                print(f"\n[!] LOGIN FAILED. The VTOP server timed out, or your password is wrong.")
+                action = input("[-] [ENTER] Retry | [0/EXIT] Close | [WIPE] Delete Saved Pass: ").strip().upper()
+                
+                if action in ['EXIT', '0']:
+                    print("Exiting... See you later!")
+                    import sys
+                    sys.exit() 
+                elif action == 'WIPE':
+                    if os.path.exists("credentials.txt"):
+                        os.remove("credentials.txt")
+                    print("[-] Trashed credentials. Let's try again...\n")
+                
+                # This continue restarts the 'while True' loop, creating a BRAND NEW async with block
+                continue 
+
+            # ==========================================
+            # --- AFTER SUCCESSFUL LOGIN ---
+            # WE ARE STILL INSIDE THE `async with` BLOCK
+            # ==========================================
+            print("   [.] Entering Home Page...")
+            
+            content_resp = None
+            for attempt in range(1, 4):
+                try:
+                    content_resp = await client._client.get(
+                        "https://vtop.vitap.ac.in/vtop/content?", 
+                        timeout=15.0,
+                        follow_redirects=True
+                    )
+                    
+                    # Debug dump - will include status code now so we know exactly what happened
+                    with open("debug_vtop.html", "w", encoding="utf-8") as f:
+                        f.write(f"\n")
+                        f.write(content_resp.text)
+                        
+                    if content_resp.status_code == 200:
+                        break
+                        
+                except (httpx.ConnectError, httpx.RemoteProtocolError):
+                    if attempt < 3:
+                        print(f"   [!] Connection reset. Retrying landing page ({attempt}/3)...")
+                        await asyncio.sleep(1.5)
+                        continue
+                    else:
+                        raise 
+
             # Fetch Initial Data
-            await client._client.get("https://vtop.vitap.ac.in/vtop/content")
-            available_sems = await fetchSemesters(client)
-            profile_data = await fetchProfile(client)
+            try:
+                available_sems = await fetchSemesters(client)
+                profile_data = await fetchProfile(client)
+            except Exception as e:
+                print(f"   [x] Login succeeded, but failed to fetch initial data: {e}")
+                input("\n   Press Enter to return to login...")
+                continue
             
             student_name = profile_data.get("basic", {}).get("name", "Student")
             target_sem = available_sems[0]['id'] if available_sems else None
             current_sem_name = available_sems[0]['name'] if available_sems else "None"
 
-            print(f"\n{'='*55}")
-            print(f" SUCCESS  : Logged in as {student_name}")
-            print(f" REG NO   : {reg_no}")
+            print(f" REG NO      : {reg_no}")
             print(f" CURRENT SEM : {current_sem_name}")
             print(f"{'='*55}\n")
+            
             
             while True:
                 print_header("MAIN MENU")
@@ -620,20 +669,762 @@ async def main():
                 print("   13. Student Profile")
                 print("   14. Change Semester")
                 print("   15. Update Credentials")
+                print("   16. Bunk Predictor (Simulate Absences)")
 
                 print("\n   0.  Exit")
                 print("   " + "─" * 40)
                 
-                choice = input("\n   Select Option: ").strip()
+                # --- SINGLE INPUT PROMPT ---
+                choice = input(f"\n[{reg_no}] Enter choice (0-16): ").strip()
                 
                 # --- MENU LOGIC ---
                 if choice == '0':
-                    print("   [.] Exiting...")
-                    return # Using return here cleanly shuts down the entire main() async function
+                    print("Logging out... Goodbye!")
+                    return # Cleanly shuts down the async function
                 
-                # ... (Your other choices 1 through 14) ...
-                
-                elif choice == '15':
+                elif choice == '1': # Today's Schedule
+                    if not target_sem:
+                        print("[!] No semester selected. Use option 14.")
+                        continue
+                    print_header(f"TODAY'S SCHEDULE - {current_sem_name}")
+                    data = await fetchTimetable(client, target_sem)
+                    print_today_schedule(data)
+
+                elif choice == '2': # Full Timetable
+                    if not target_sem:
+                        print("[!] No semester selected. Use option 14.")
+                        continue
+                    print_header(f"FULL TIMETABLE - {current_sem_name}")
+                    data = await fetchTimetable(client, target_sem)
+                    print_timetable(data)
+
+                elif choice == '3': # Attendance
+                    if not target_sem:
+                        print("[!] No semester selected. Use option 14.")
+                        continue
+                    while True:
+                        print("\n--- ATTENDANCE MENU ---")
+                        print("1. View Summary (All Subjects)")
+                        print("2. View Detailed Attendance (Subject-wise)")
+                        print("0. Back to Main Menu")
+                        sub = input("Select option: ")
+                        if sub == "1":
+                            data = await fetchAttendance(client, target_sem)
+                            print_attendance(data)
+                        elif sub == "2":
+                            data = await fetchAttendance(client, target_sem)
+                            await print_attendance_with_details(client, target_sem, data)
+                        elif sub == "0":
+                            break
+                        else:
+                            print("[!] Invalid option")
+
+                elif choice == '4': # Internal Marks
+                    if not target_sem:
+                        print("[!] No semester selected. Use option 14.")
+                        continue
+                    print_header(f"INTERNAL MARKS - {current_sem_name}")
+                    data = await fetchMarks(client, target_sem)
+                    print_marks(data)
+
+                elif choice == '5': # Grade History
+                    print_header("ACADEMIC TRANSCRIPT")
+                    g_data = await fetchGradeHistory(client)
+                    print_grade_history(g_data)
+
+                elif choice == '6': # Credits
+                    print_header("ACADEMIC CREDITS DISTRIBUTION")
+                    c_data = await fetchCredits(client)
+                    print_credits(c_data)
+
+                elif choice == '7': # Course Page
+                    if not target_sem:
+                        print("[!] No semester selected. Use option 14.")
+                        continue
+                    
+                    print(f"   [.] Fetching Course List...")
+                    master_courses = await fetchCourseList(client, target_sem)
+
+                    if not master_courses:
+                        print("   [!] No registered courses found for this semester.")
+                        continue
+
+                    while True:
+                        print_header(f"SELECT COURSE ({len(master_courses)} Found)")
+                        for idx, c in enumerate(master_courses):
+                            print(f"   {idx+1}. {c['code']} : {c['title'][:40]} - {c['type']}")
+                        print("   0. Back to Main Menu")
+                        
+                        c_sel = input("\n   Select course number: ").strip()
+                        if c_sel == '0': break 
+
+                        try:
+                            sel_idx = int(c_sel) - 1
+                            if 0 <= sel_idx < len(master_courses):
+                                selected_course = master_courses[sel_idx]
+                                selected_code = selected_course['code']
+                                
+                                print(f"   [.] Fetching classes/slots for {selected_code}...")
+                                classes = await fetchCourseClasses(client, target_sem, selected_course['generic_class_id'])
+                                
+                                if not classes:
+                                    print(f"   [!] No active classes found for {selected_code}.")
+                                    continue
+
+                                selected_class = None
+                                
+                                if len(classes) == 1:
+                                    selected_class = classes[0]
+                                    fac_clean = re.sub(r'^\d+\s*-\s*', '', selected_class['faculty'])
+                                    print(f"   [+] Auto-selected: SLOT: {selected_class['slot']} | FAC: {fac_clean}")
+                                else:
+                                    print(f"\n   SELECT COMPONENT FOR {selected_code}:")
+                                    print(f"   {'#':<4} {'SLOT':<17} {'FACULTY NAME'}")
+                                    print("   " + "-" * 60)
+                                    
+                                    current_slot = ""
+                                    for i, cls in enumerate(classes):
+                                        if cls['slot'] != current_slot:
+                                            if current_slot != "": print("")
+                                            print(f"   🔹 [{cls['slot']}]")
+                                            current_slot = cls['slot']
+
+                                        fac_clean = re.sub(r'^\d+\s*-\s*', '', cls['faculty'])
+                                        fac_clean = re.sub(r'\s*-[A-Z\s]+$', '', fac_clean).strip()
+                                        print(f"       {i+1:<2}. {fac_clean}")
+                                        
+                                    print("   " + "-" * 60)
+                                    print("       0 . Cancel")
+                                    
+                                    cls_sel = input("\n   Select component: ").strip()
+                                    if cls_sel == '0': continue
+                                    try:
+                                        cls_idx = int(cls_sel) - 1
+                                        if 0 <= cls_idx < len(classes):
+                                            selected_class = classes[cls_idx]
+                                        else:
+                                            print("   [!] Invalid component selection.")
+                                            continue
+                                    except ValueError:
+                                        print("   [!] Please enter a number.")
+                                        continue
+
+                                if not selected_class['erp_id']:
+                                    print(f"\n   [!] Faculty ID could not be scraped for {selected_code}.")
+                                    manual_id = input(f"   Enter Faculty ID (erpId) manually: ").strip()
+                                    if manual_id: 
+                                        selected_class['erp_id'] = manual_id
+                                    else:
+                                        print("   [x] Cannot proceed without Faculty ID.")
+                                        continue
+
+                                print(f"   [.] Fetching materials page...")
+                                c_page = await fetchCoursePage(
+                                    client, 
+                                    target_sem, 
+                                    selected_class['class_id'], 
+                                    selected_class['erp_id']
+                                )
+                                
+                                print_course_page_table(c_page)
+                                
+                                # --- DOWNLOAD LOOP ---
+                                home = os.path.expanduser("~")
+                                save_dir = os.path.join(home, "Downloads")
+
+                                def check_exists(base_name):
+                                    safe_name = re.sub(r'[\\/*?:"<>|]', "", base_name).strip()
+                                    if not safe_name: safe_name = "downloaded_material"
+                                    return len(glob.glob(os.path.join(save_dir, f"{safe_name}.*"))) > 0
+
+                                def format_general_name(code, title, index):
+                                    t_lower = title.lower()
+                                    if "syllabus" in t_lower:
+                                        return f"{code}-syllabus"
+                                    elif "reference-material" in t_lower or "reference material" in t_lower:
+                                        match = re.search(r'reference[- ]material[- _]*([ivxIVX\d]+)', t_lower)
+                                        if match:
+                                            numeral = match.group(1).upper()
+                                            return f"{code}- Reference material - {numeral}"
+                                        return f"{code}- Reference material - {index}"
+                                    else:
+                                        return f"{code}-{title[:30]}"
+
+                                while True:
+                                    print("\n   ACTIONS:")
+                                    print("   [1, 2..] Enter S.No(s) to download (e.g., 18, 21, 23)")
+                                    print("   [G1, G2] Enter G1, G2.. to download General Material")
+                                    print("   [A]      Download ALL materials (Skips existing files)")
+                                    print("   [0]      Back to Subject List") 
+                                    
+                                    dl_choice = input("\n   Choice: ").strip().upper()
+                                    if dl_choice == '0': break 
+                                    
+                                    def get_short_date(date_str):
+                                        if not date_str: return "UnknownDate"
+                                        parts = date_str.split('-')
+                                        return f"{parts[0]}-{parts[1]}" if len(parts) >= 2 else date_str
+
+                                    if dl_choice == 'A':
+                                        count = 0
+                                        skipped = 0
+                                        print(f"   [.] Saving files directly to: {save_dir}")
+                                        
+                                        for lec in c_page['lectures']:
+                                            short_date = get_short_date(lec.get('date', ''))
+                                            safe_topic = re.sub(r'[\\/*?:"<>|]', "", lec['topic']).strip()
+                                            
+                                            if lec.get('download_path'):
+                                                fname = f"{short_date}_{selected_code}_{safe_topic}"
+                                                if check_exists(fname):
+                                                    print(f"   [-] Skipped (Exists): {fname[:60]}...")
+                                                    skipped += 1
+                                                else:
+                                                    res, _ = await download_course_material(client, lec['download_path'], save_dir, fname)
+                                                    if res: count += 1
+                                            
+                                            for r_idx, r_path in enumerate(lec.get('ref_paths', [])):
+                                                fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
+                                                if check_exists(fname):
+                                                    print(f"   [-] Skipped (Exists): {fname[:60]}...")
+                                                    skipped += 1
+                                                else:
+                                                    res, _ = await download_course_material(client, r_path, save_dir, fname)
+                                                    if res: count += 1
+                                            
+                                            if lec.get('web_links'):
+                                                print(f"\n   [🔗] Web Links for: {lec['topic'][:50]}...")
+                                                for link in lec['web_links']:
+                                                    print(f"        -> {link}")
+                                                print("") 
+                                                
+                                        for i, gen in enumerate(c_page.get('general', [])):
+                                            fname = format_general_name(selected_code, gen['title'], i+1)
+                                            if check_exists(fname):
+                                                print(f"   [-] Skipped (Exists): {fname[:60]}...")
+                                                skipped += 1
+                                            else:
+                                                res, _ = await download_course_material(client, gen['download_path'], save_dir, fname)
+                                                if res: count += 1
+                                        
+                                        print(f"   [✓] Downloaded {count} new files. (Skipped {skipped})")
+                                                
+                                    elif dl_choice.startswith('G'):
+                                        try:
+                                            g_idx = int(dl_choice[1:]) - 1
+                                            if 0 <= g_idx < len(c_page['general']):
+                                                item = c_page['general'][g_idx]
+                                                fname = format_general_name(selected_code, item['title'], g_idx+1)
+                                                
+                                                if check_exists(fname):
+                                                    print(f"   [-] File already exists in Downloads: {fname}")
+                                                else:
+                                                    print(f"   [.] Downloading {fname[:60]}...")
+                                                    res, filepath = await download_course_material(client, item['download_path'], save_dir, fname)
+                                                    if res: print(f"   [✓] Saved to: {filepath}")
+                                                    else: print(f"   [x] Failed: {filepath}")
+                                            else:
+                                                print("   [!] Invalid G number.")
+                                        except ValueError: 
+                                            print("   [!] Invalid input format. Use G1, G2, etc.")
+
+                                    elif all(part.strip().isdigit() for part in dl_choice.split(',')):
+                                        choices = [x.strip() for x in dl_choice.split(',')]
+                                        
+                                        for choice in choices:
+                                            target_sno = int(choice)
+                                            target_lec = next((l for l in c_page['lectures'] if l['s_no'] == target_sno), None)
+                                            
+                                            if target_lec:
+                                                short_date = get_short_date(target_lec.get('date', ''))
+                                                safe_topic = re.sub(r'[\\/*?:"<>|]', "", target_lec['topic']).strip()
+                                                downloads_started = False
+                                                
+                                                if target_lec.get('download_path'):
+                                                    downloads_started = True
+                                                    fname = f"{short_date}_{selected_code}_{safe_topic}"
+                                                    if check_exists(fname): 
+                                                        print(f"   [-] Main file already exists: {fname[:60]}...")
+                                                    else:
+                                                        print(f"   [.] Downloading Main: {fname[:60]}...")
+                                                        res, filepath = await download_course_material(client, target_lec['download_path'], save_dir, fname)
+                                                        if res: print(f"   [✓] Saved: {filepath}")
+                                                
+                                                for r_idx, r_path in enumerate(target_lec.get('ref_paths', [])):
+                                                    downloads_started = True
+                                                    fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
+                                                    if check_exists(fname): 
+                                                        print(f"   [-] Reference file already exists: {fname[:60]}...")
+                                                    else:
+                                                        print(f"   [.] Downloading Reference {r_idx+1}...")
+                                                        res, filepath = await download_course_material(client, r_path, save_dir, fname)
+                                                        if res: print(f"   [✓] Saved: {filepath}")
+                                                
+                                                if target_lec.get('web_links'):
+                                                    downloads_started = True
+                                                    print(f"\n   [🔗] Web Links for Lecture {target_sno}:")
+                                                    for link in target_lec['web_links']:
+                                                        print(f"        -> {link}")
+                                                        
+                                                if not downloads_started:
+                                                    print(f"   [!] No materials available for Lecture {target_sno}.")
+                                            else:
+                                                print(f"   [!] Lecture S.No {target_sno} not found.")
+                                                
+                                    else:
+                                        print("   [!] Invalid command. Type a number, comma separated numbers, G#, or A.")
+                        except ValueError:
+                            print("   [!] Please enter a valid number.")
+
+                elif choice == '8': # Digital Assignments
+                    if not target_sem:
+                        print("[!] No semester selected. Use option 14.")
+                        continue
+                        
+                    print(f"   [.] Fetching Digital Assignment Courses...")
+                    da_courses = await fetchDACourseList(client, target_sem)
+                    
+                    if not da_courses:
+                        print("   [!] No digital assignments found for this semester.")
+                        continue
+                        
+                    while True:
+                        print_header("DIGITAL ASSIGNMENTS")
+                        print(f"   {'#':<3} {'CODE':<10} {'COURSE TITLE':<45} {'FACULTY'}")
+                        print("   " + "─" * 90)
+                        for i, c in enumerate(da_courses):
+                            print(f"   {i+1:<3} {c['code']:<10} {c['title'][:43]:<45} {c['faculty'][:25]}")
+                        print("   " + "─" * 90)
+                        print("   0. Back to Main Menu")
+                        
+                        c_sel = input("\n   Select course number: ").strip()
+                        if c_sel == '0': break
+                        
+                        try:
+                            idx = int(c_sel) - 1
+                            if 0 <= idx < len(da_courses):
+                                selected_course = da_courses[idx]
+                                print(f"\n   [.] Fetching assignments for {selected_course['code']}...")
+                                assignments = await fetchDADetails(client, selected_course['class_id'])
+                                
+                                if not assignments:
+                                    print(f"   [!] No assignments posted yet for {selected_course['code']}.")
+                                    input("\n   Press Enter to continue...")
+                                    continue
+                                    
+                                while True:
+                                    print(f"\n   ASSIGNMENTS: {selected_course['code']} - {selected_course['title']}")
+                                    print(f"   {'#':<3} {'TITLE':<25} {'DUE DATE':<15} {'FILES'}")
+                                    print("   " + "─" * 65)
+                                    
+                                    for asn in assignments:
+                                        files = []
+                                        if asn['qp_link']: files.append("📄 QP")
+                                        if asn['sub_link']: files.append("✅ SUB")
+                                        f_str = ", ".join(files) if files else "None"
+                                        print(f"   {asn['s_no']:<3} {asn['title']:<25} {asn['due_date']:<15} {f_str}")
+                                    print("   " + "─" * 65)
+                                    print("   [#]  Enter # to Download Files")
+                                    print("   [A]  Download ALL Files for this course")
+                                    print("   [0]  Go Back")
+                                    
+                                    a_sel = input("\n   Choice: ").strip().upper()
+                                    if a_sel == '0': break
+                                    
+                                    save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                                    
+                                    if a_sel == 'A':
+                                        print(f"   [.] Downloading all available files to {save_dir}...")
+                                        for asn in assignments:
+                                            if asn['qp_link']:
+                                                fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_QP"
+                                                await download_course_material(client, asn['qp_link'], save_dir, fname)
+                                            if asn['sub_link']:
+                                                fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_MySubmission"
+                                                await download_course_material(client, asn['sub_link'], save_dir, fname)
+                                        print("   [✓] Bulk download complete.")
+                                        
+                                    elif a_sel.isdigit():
+                                        a_idx = int(a_sel) - 1
+                                        if 0 <= a_idx < len(assignments):
+                                            target_asn = assignments[a_idx]
+                                            
+                                            if target_asn['qp_link']:
+                                                fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_QP"
+                                                print(f"   [.] Downloading Question Paper...")
+                                                res, path = await download_course_material(client, target_asn['qp_link'], save_dir, fname)
+                                                if res: print(f"   [✓] Saved: {path}")
+                                                
+                                            if target_asn['sub_link']:
+                                                fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_MySubmission"
+                                                print(f"   [.] Downloading Your Submission...")
+                                                res, path = await download_course_material(client, target_asn['sub_link'], save_dir, fname)
+                                                if res: print(f"   [✓] Saved: {path}")
+                                                
+                                            if not target_asn['qp_link'] and not target_asn['sub_link']:
+                                                print("   [!] No files available to download for this assignment.")
+                                        else:
+                                            print("   [!] Invalid number.")
+                            else:
+                                print("   [!] Invalid selection.")
+                        except ValueError:
+                            print("   [!] Please enter a valid number.")
+
+                elif choice == '9': # Exam Schedule
+                    if not target_sem:
+                        print("[!] No semester selected. Use option 14.")
+                        continue
+                    print_header(f"EXAM SCHEDULE - {current_sem_name}")
+                    data = await fetchExamSchedule(client, target_sem)
+                    print_exam_schedule(data)
+
+                elif choice == '10': # General Outing
+                    print_header("GENERAL OUTING SYSTEM")
+                    print("   [.] Fetching student details...")
+                    data = await fetchGeneralOuting(client)
+                    
+                    if not data or not data.get('info'):
+                        print("   [!] Could not fetch data. Try logging in again.")
+                        continue
+
+                    info = data['info']
+                    history = data.get('history', [])
+
+                    print(f"\n   STUDENT: {info.get('name')}")
+                    print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
+                    print("   " + "-" * 60)
+                    
+                    print("\n   MENU:")
+                    print("   1. Apply for New Outing")
+                    print("   2. View History / Actions")
+                    print("   0. Back")
+                    
+                    sub = input("\n   Select Option: ").strip()
+                    
+                    if sub == '2':
+                        printGeneralOuting(history)
+
+                        if history:
+                            print("\n   [P] Download Gate Pass (PDF)")
+                            print("   [D] Delete a Request")
+                            print("   [Enter] Go Back")
+                            
+                            act = input("   Choice: ").strip().upper()
+                            
+                            if act == 'P':
+                                try:
+                                    idx = int(input("   Enter IDX to download: ")) - 1
+                                    if 0 <= idx < len(history):
+                                        item = history[idx]
+                                        if item['download_url']:
+                                            print("   [.] Downloading...")
+                                            
+                                            home = os.path.expanduser("~")
+                                            download_folder = os.path.join(home, "Downloads")
+                                            clean_date = item['out_date'].replace(" ", "-")
+                                            filename = f"general_outing_{clean_date}.pdf"
+                                            full_path = os.path.join(download_folder, filename)
+                                            res, msg = await download_g_outpass(client, item['download_url'], full_path)
+                                            
+                                            if res: 
+                                                print(f"   ✅ Saved to: {full_path}")
+                                            else:   
+                                                print(f"   ❌ {msg}")
+                                        else:
+                                            print("   [!] No pass available (Must be Approved).")
+                                    else:
+                                        print("   [!] Invalid Index.")
+                                except ValueError:
+                                    print("   [!] Please enter a number.")
+                            
+                            elif act == 'D':
+                                try:
+                                    idx = int(input("   Enter IDX to delete: ")) - 1
+                                    if 0 <= idx < len(history):
+                                        item = history[idx]
+                                        if "Wait" in item['status'] or "Pending" in item['status']:
+                                                if item['booking_id']:
+                                                    confirm = input(f"   Delete request for {item['place']}? (y/n): ")
+                                                    if confirm.lower() == 'y':
+                                                        res, msg = await deleteGeneralOuting(client, item['booking_id'])
+                                                        if res: print(f"   ✅ {msg}")
+                                                        else:   print(f"   ❌ {msg}")
+                                        else:
+                                            print("   [!] Cannot delete. (Only 'Waiting' requests can be deleted)")
+                                    else:
+                                        print("   [!] Invalid Index.")
+                                except ValueError:
+                                    print("   [!] Please enter a number.")
+
+                    elif sub == '1':
+                        print("\n   --- NEW OUTING APPLICATION ---")
+                        print("   ⚠️  NOTE: You must apply at least 24 HOURS in advance.")
+                        print("   [Enter '0' to Cancel and Go Back]")
+                        
+                        try:
+                            place = input("\n   Place of Visit : ").strip()
+                            if place == '0':
+                                print("   [x] Cancelled.")
+                                continue
+
+                            purpose = input("   Purpose        : ").strip()
+                            if purpose == '0':
+                                print("   [x] Cancelled.")
+                                continue
+
+                            print("   (Format: DD-MMM-YYYY, e.g., 11-Feb-2026)")
+                            out_d = input("   Out Date        : ").strip()
+                            if out_d == '0': continue
+
+                            out_t = input("   Out Time (HH:MM): ").strip()
+                            
+                            in_d  = input("   In Date         : ").strip()
+                            in_t  = input("   In Time (HH:MM): ").strip()
+                            
+                            confirm = input("\n   Submit this request? (y/n): ").lower()
+                            if confirm == 'y':
+                                print("\n   [.] Submitting...")
+                                success, msg = await submitGeneralOuting(client, info, place, purpose, out_d, out_t, in_d, in_t)
+                                
+                                if success:
+                                    print(f"   ✅ SUCCESS: {msg}")
+                                else:
+                                    print(f"   ❌ FAILED: {msg}")
+                            else:
+                                print("   [x] Cancelled.")
+
+                        except Exception as e:
+                            print(f"   [!] Error: {e}")
+
+                elif choice == '11': # Weekend Outing
+                    print_header("WEEKEND OUTING SYSTEM")
+                    print("   [.] Fetching details...")
+                    data = await fetchWeekendOuting(client)
+                    
+                    if not data:
+                        print("   [!] Could not fetch data. (Check internet or re-login)")
+                        continue
+
+                    info = data.get('info', {})
+                    history = data.get('history', [])
+                    can_apply = data.get('can_apply', True)
+
+                    print(f"\n   STUDENT: {info.get('name')}")
+                    print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
+                    
+                    if not can_apply:
+                        print("   STATUS : 🔴 Applications Closed (Tue-Fri Only)")
+                    else:
+                        print("   STATUS : 🟢 Applications Open")
+                        
+                    print("   " + "-" * 60)
+                    
+                    while True:
+                        print("\n   MENU:")
+                        print("   1. Apply for Weekend Outing")
+                        print("   2. View History / Delete / Download Outpass")
+                        print("   0. Back")
+                        
+                        sub = input("\n   Select Option: ").strip()
+                        if sub == '0': break
+                        
+                        if sub == '1':
+                            if not can_apply:
+                                print("\n   ⚠️  ACCESS DENIED: Time Restriction")
+                                print("   [!] You can only apply from Tuesday 12:00 AM to Friday 11:59 PM.")
+                                input("   Press Enter to return...")
+                                continue
+                            
+                            print("\n   --- NEW WEEKEND OUTING ---")
+                            print("   [Enter '0' to Cancel at any time]")
+                            
+                            try:
+                                places = ["Vijayawada", "Guntur", "Tenali", "Eluru", "Others"]
+                                print("\n   Select Place of Visit:")
+                                for i, p in enumerate(places):
+                                    print(f"   {i+1}. {p}")
+                                p_idx = input("   Choice: ").strip()
+                                if p_idx == '0': continue
+                                place = places[int(p_idx) - 1]
+                                
+                                purpose = input("\n   Purpose (Max 20 chars): ").strip()
+                                if purpose == '0': continue
+                                
+                                print("\n   (Format: DD-MMM-YYYY, e.g., 22-Feb-2026)")
+                                print("   *Note: Must be within the next 6 days.")
+                                out_d = input("   Date: ").strip()
+                                if out_d == '0': continue
+                                
+                                times = [
+                                    "9:30 AM- 3:30PM", 
+                                    "10:30 AM- 4:30PM", 
+                                    "11:30 AM- 5:30PM", 
+                                    "12:30 PM- 6:30PM"
+                                ]
+                                print("\n   Select Outing Time:")
+                                for i, t in enumerate(times):
+                                    print(f"   {i+1}. {t}")
+                                t_idx = input("   Choice: ").strip()
+                                if t_idx == '0': continue
+                                out_t = times[int(t_idx) - 1]
+                                
+                                while True:
+                                    contact = input("\n   Contact No (10 digits, starts with 7-9): ").strip()
+                                    if contact == '0': break
+                                    if re.match(r"^[7-9]\d{9}$", contact):
+                                        break
+                                    else:
+                                        print("   [!] Invalid format. Try again.")
+                                if contact == '0': continue
+                                
+                                confirm = input(f"\n   Submit request for {place} on {out_d}? (y/n): ").lower()
+                                if confirm == 'y':
+                                    print("\n   [.] Submitting payload...")
+                                    success, msg = await submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact)
+                                    if success: 
+                                        print(f"   ✅ SUCCESS: {msg}")
+                                        data = await fetchWeekendOuting(client)
+                                        history = data.get('history', [])
+                                    else: 
+                                        print(f"   ❌ FAILED: {msg}")
+                                else: 
+                                    print("   [x] Cancelled.")
+                                    
+                            except (ValueError, IndexError): 
+                                print("   [!] Invalid selection. Please enter the correct number.")
+                            except Exception as e: 
+                                print(f"   [!] Error: {e}")
+
+                        elif sub == '2':
+                            printWeekendOuting(history)
+                            
+                            if history:
+                                print("\n   [#] Type Row Number to Download Outpass")
+                                print("   [D] Delete a Pending Request")
+                                print("   [0] Go Back")
+                                act = input("\n   Choice: ").strip().upper()
+                                
+                                if act == '0' or act == '':
+                                    continue
+                                    
+                                elif act.upper() == 'D':
+                                    try:
+                                        idx = int(input("   Enter Row # to delete: ")) - 1
+                                        if 0 <= idx < len(history):
+                                            item = history[idx]
+                                            if "Wait" in item['status'] or "Pending" in item['status']:
+                                                if item.get('booking_id'):
+                                                    confirm = input(f"   Delete request for {item.get('place', 'this location')}? (y/n): ")
+                                                    if confirm.lower() == 'y':
+                                                        res, msg = await deleteWeekendOuting(client, item['booking_id'])
+                                                        if res: 
+                                                            print(f"   ✅ {msg}")
+                                                            data = await fetchWeekendOuting(client)
+                                                            history = data.get('history', [])
+                                                        else:   
+                                                            print(f"   ❌ {msg}")
+                                                else:
+                                                    print("   [!] Error: No booking ID found for this request.")
+                                            else:
+                                                print("   [!] Cannot delete active/processed requests.")
+                                        else:
+                                            print("   [!] Invalid Row Number.")
+                                    except ValueError:
+                                        print("   [!] Please enter a valid number.")
+                                        
+                                elif act.isdigit():
+                                    idx = int(act) - 1
+                                    if 0 <= idx < len(history):
+                                        selected_outing = history[idx]
+                                        if selected_outing['download_link']:
+                                            save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                                            fname = f"Outpass_{selected_outing['out_date']}_{selected_outing['place']}"
+                                            
+                                            print(f"   [.] Securing Outpass from VTOP servers...")
+                                            res, path = await download_w_outpass(
+                                                client, 
+                                                selected_outing['download_link'], 
+                                                save_dir, 
+                                                fname
+                                            )
+                                            if res: print(f"   [✓] Saved to: {path}")
+                                            else: print(f"   [x] Failed to download Outpass.")
+                                        else:
+                                            print("   [!] Outpass is not available for this request yet.")
+                                    else:
+                                        print("   [!] Invalid Row Number.")
+
+                elif choice == '12': # 75% Calculator
+                    print_header("75% ATTENDANCE CALCULATOR")
+                    print("   Calculate how many classes you can bunk or need to attend.")
+                    print("   " + "─" * 60)
+                    try:
+                        target = 75.0
+                        present = int(input("   Classes Attended (Present): ").strip())
+                        total = int(input("   Total Classes Conducted:    ").strip())
+                        
+                        if total == 0:
+                            print("   [!] Total classes cannot be zero.")
+                            input("\n   Press Enter to continue...")
+                            continue
+
+                        current_pct = (present / total) * 100
+                        print("   " + "─" * 60)
+                        print(f"   Current Attendance: {current_pct:.2f}%")
+                        
+                        if current_pct >= target:
+                            bunkable = math.floor((100 * present - target * total) / target)
+                            if bunkable > 0:
+                                print(f"   ✅ You are SAFE!")
+                                print(f"   🎉 You can bunk {int(bunkable)} next classes and stay above {target}%.")
+                                new_total = total + bunkable
+                                new_pct = (present / new_total) * 100
+                                print(f"      (Attendance will drop to {new_pct:.2f}%)")
+                            else:
+                                print(f"   ⚠️  You are on the edge! You cannot miss any more classes.")
+                                
+                        else:
+                            needed = math.ceil((target * total - 100 * present) / (100 - target))
+                            print(f"   ❌ You are in the DANGER ZONE!")
+                            print(f"   🚑 You must attend {int(needed)} next classes continuously.")
+                            new_present = present + needed
+                            new_total = total + needed
+                            new_pct = (new_present / new_total) * 100
+                            print(f"      (Attendance will recover to {new_pct:.2f}%)")
+                            
+                    except ValueError:
+                        print("   [!] Invalid input. Please enter numbers only.")
+                    except ZeroDivisionError:
+                        print("   [!] Target cannot be 100% (leads to division by zero).")
+                    
+                    input("\n   Press Enter to return...")
+
+                elif choice == '13': # Profile
+                    print_header("STUDENT PROFILE")
+                    print_profile(profile_data)
+
+                elif choice == '14': # Change Sem
+                    if not available_sems:
+                        print("   ...No semester data available. Re-scraping...")
+                        available_sems = await fetchSemesters(client)
+                    if available_sems:
+                        print_header("SELECT SEMESTER")
+                        for i, s in enumerate(available_sems):
+                            print(f"   {i+1}. {s['name']}")
+                        sel = input("\nSelect a semester number (0 to cancel): ").strip()
+                        if sel == '0': continue
+                        try:
+                            idx = int(sel) - 1
+                            if 0 <= idx < len(available_sems):
+                                target_sem = available_sems[idx]['id']
+                                current_sem_name = available_sems[idx]['name']
+                                print(f"[+] Active Semester set to: {current_sem_name}")
+                            else:
+                                print("[!] Invalid selection.")
+                        except ValueError:
+                            print("[!] Please enter a valid number.")
+
+                elif choice == '15': # Update Credentials
                     print("\n   =======================================")
                     print("   🔄 UPDATE SAVED CREDENTIALS")
                     print("   =======================================")
@@ -657,846 +1448,121 @@ async def main():
                         
                         print("   [✓] Credentials updated successfully!")
                         print("   [🚀] Restarting CLI to apply changes...\n")
-                        
-                        # Instantly restarts the script to trigger a fresh login!
                         os.execv(sys.executable, ['python'] + sys.argv)
                     else:
                         print("   [!] Update cancelled. Kept old credentials.")
-            
-            choice = input(f"\n[{reg_no}] Enter choice (0-14): ").strip()
-
-            if choice == '0':
-                print("Logging out... Goodbye!")
-                break
-            
-            elif choice == '1': # Today's Schedule (Old 5)
-                if not target_sem:
-                    print("[!] No semester selected. Use option 14.")
-                    continue
-                print_header(f"TODAY'S SCHEDULE - {current_sem_name}")
-                data = await fetchTimetable(client, target_sem)
-                print_today_schedule(data)
-
-            elif choice == '2': # Full Timetable (Old 4)
-                if not target_sem:
-                    print("[!] No semester selected. Use option 14.")
-                    continue
-                print_header(f"FULL TIMETABLE - {current_sem_name}")
-                data = await fetchTimetable(client, target_sem)
-                print_timetable(data)
-
-            elif choice == '3': # Attendance (Old 3)
-                if not target_sem:
-                    print("[!] No semester selected. Use option 14.")
-                    continue
-                while True:
-                    print("\n--- ATTENDANCE MENU ---")
-                    print("1. View Summary (All Subjects)")
-                    print("2. View Detailed Attendance (Subject-wise)")
-                    print("0. Back to Main Menu")
-                    sub = input("Select option: ")
-                    if sub == "1":
-                        data = await fetchAttendance(client, target_sem)
-                        print_attendance(data)
-                    elif sub == "2":
-                        data = await fetchAttendance(client, target_sem)
-                        await print_attendance_with_details(client, target_sem, data)
-                    elif sub == "0":
-                        break
-                    else:
-                        print("[!] Invalid option")
-
-            elif choice == '4': # Internal Marks (Old 6)
-                if not target_sem:
-                    print("[!] No semester selected. Use option 14.")
-                    continue
-                print_header(f"INTERNAL MARKS - {current_sem_name}")
-                data = await fetchMarks(client, target_sem)
-                print_marks(data)
-
-            elif choice == '5': # Grade History (Old 2)
-                print_header("ACADEMIC TRANSCRIPT")
-                g_data = await fetchGradeHistory(client)
-                print_grade_history(g_data)
-
-            elif choice == '6': # Credits (Old 9)
-                print_header("ACADEMIC CREDITS DISTRIBUTION")
-                c_data = await fetchCredits(client)
-                print_credits(c_data)
-
-            elif choice == '7': # Course Page (Old 10)
-                if not target_sem:
-                    print("[!] No semester selected. Use option 14.")
-                    continue
                 
-                print(f"   [.] Fetching Course List...")
-                
-                # STEP 1: Fetch the authoritative Master List
-                master_courses = await fetchCourseList(client, target_sem)
+                elif choice == '16':
+                    print("\n   [ BUNK SIMULATOR ]")
+                    print("   Formats: '05-03, 10-03' OR '05-03 to 15-03'")
+                    bunk_input = input("   Enter dates/range to bunk: ").strip()
 
-                if not master_courses:
-                    print("   [!] No registered courses found for this semester.")
-                    continue
-
-                while True:
-                    print_header(f"SELECT COURSE ({len(master_courses)} Found)")
-                    for idx, c in enumerate(master_courses):
-                        print(f"   {idx+1}. {c['code']} : {c['title'][:40]} - {c['type']}")
-                    print("   0. Back to Main Menu")
-                    
-                    c_sel = input("\n   Select course number: ").strip()
-                    if c_sel == '0': break 
-
-                    try:
-                        sel_idx = int(c_sel) - 1
-                        if 0 <= sel_idx < len(master_courses):
-                            selected_course = master_courses[sel_idx]
-                            selected_code = selected_course['code']
-                            
-                            print(f"   [.] Fetching classes/slots for {selected_code}...")
-
-                            # STEP 2: Fetch specific classes/slots for this course
-                            classes = await fetchCourseClasses(client, target_sem, selected_course['generic_class_id'])
-                            
-                            if not classes:
-                                print(f"   [!] No active classes found for {selected_code}.")
-                                continue
-
-                            selected_class = None
-                            
-                            if len(classes) == 1:
-                                selected_class = classes[0]
-                                fac_clean = re.sub(r'^\d+\s*-\s*', '', selected_class['faculty'])
-                                print(f"   [+] Auto-selected: SLOT: {selected_class['slot']} | FAC: {fac_clean}")
-                            else:
-                                print(f"\n   SELECT COMPONENT FOR {selected_code}:")
-                                print(f"   {'#':<4} {'SLOT':<17} {'FACULTY NAME'}")
-                                print("   " + "-" * 60)
-                                
-                                current_slot = ""
-                                for i, cls in enumerate(classes):
-                                    # Group by Slot for visual clarity
-                                    if cls['slot'] != current_slot:
-                                        if current_slot != "": print("")
-                                        print(f"   🔹 [{cls['slot']}]")
-                                        current_slot = cls['slot']
-
-                                    # Clean Faculty Name
-                                    fac_clean = re.sub(r'^\d+\s*-\s*', '', cls['faculty'])
-                                    fac_clean = re.sub(r'\s*-[A-Z\s]+$', '', fac_clean).strip()
-                                    
-                                    print(f"       {i+1:<2}. {fac_clean}")
-                                    
-                                print("   " + "-" * 60)
-                                print("       0 . Cancel")
-                                
-                                cls_sel = input("\n   Select component: ").strip()
-                                if cls_sel == '0': continue
-                                try:
-                                    cls_idx = int(cls_sel) - 1
-                                    if 0 <= cls_idx < len(classes):
-                                        selected_class = classes[cls_idx]
-                                    else:
-                                        print("   [!] Invalid component selection.")
-                                        continue
-                                except ValueError:
-                                    print("   [!] Please enter a number.")
-                                    continue
-
-                            if not selected_class['erp_id']:
-                                print(f"\n   [!] Faculty ID could not be scraped for {selected_code}.")
-                                manual_id = input(f"   Enter Faculty ID (erpId) manually: ").strip()
-                                if manual_id: 
-                                    selected_class['erp_id'] = manual_id
-                                else:
-                                    print("   [x] Cannot proceed without Faculty ID.")
-                                    continue
-
-                            print(f"   [.] Fetching materials page...")
-
-                            # STEP 3: Fetch the final materials page
-                            c_page = await fetchCoursePage(
-                                client, 
-                                target_sem, 
-                                selected_class['class_id'], 
-                                selected_class['erp_id']
-                            )
-                            
-                            print_course_page_table(c_page)
-                            
-                            # --- DOWNLOAD LOOP ---
-                            home = os.path.expanduser("~")
-                            save_dir = os.path.join(home, "Downloads")
-
-                            # Helper function to skip existing files
-                            def check_exists(base_name):
-                                safe_name = re.sub(r'[\\/*?:"<>|]', "", base_name).strip()
-                                if not safe_name: safe_name = "downloaded_material"
-                                return len(glob.glob(os.path.join(save_dir, f"{safe_name}.*"))) > 0
-
-                            # Helper function to format General Material Names
-                            def format_general_name(code, title, index):
-                                t_lower = title.lower()
-                                if "syllabus" in t_lower:
-                                    return f"{code}-syllabus"
-                                elif "reference-material" in t_lower or "reference material" in t_lower:
-                                    match = re.search(r'reference[- ]material[- _]*([ivxIVX\d]+)', t_lower)
-                                    if match:
-                                        numeral = match.group(1).upper()
-                                        return f"{code}- Reference material - {numeral}"
-                                    return f"{code}- Reference material - {index}"
-                                else:
-                                    return f"{code}-{title[:30]}"
-
-                            while True:
-                                print("\n   ACTIONS:")
-                                print("   [1, 2..] Enter S.No(s) to download (e.g., 18, 21, 23)")
-                                print("   [G1, G2] Enter G1, G2.. to download General Material")
-                                print("   [A]      Download ALL materials (Skips existing files)")
-                                print("   [0]      Back to Subject List") 
-                                
-                                dl_choice = input("\n   Choice: ").strip().upper()
-                                if dl_choice == '0': break 
-                                
-                                # --- Helper for Date Formatting ---
-                                def get_short_date(date_str):
-                                    if not date_str: return "UnknownDate"
-                                    parts = date_str.split('-')
-                                    return f"{parts[0]}-{parts[1]}" if len(parts) >= 2 else date_str
-
-                                # --- 1. Download ALL ---
-                                if dl_choice == 'A':
-                                    count = 0
-                                    skipped = 0
-                                    print(f"   [.] Saving files directly to: {save_dir}")
-                                    
-                                    # Download Lectures
-                                    for lec in c_page['lectures']:
-                                        short_date = get_short_date(lec.get('date', ''))
-                                        safe_topic = re.sub(r'[\\/*?:"<>|]', "", lec['topic']).strip()
-                                        
-                                        # 1. Main Lecture
-                                        if lec.get('download_path'):
-                                            fname = f"{short_date}_{selected_code}_{safe_topic}"
-                                            if check_exists(fname):
-                                                print(f"   [-] Skipped (Exists): {fname[:60]}...")
-                                                skipped += 1
-                                            else:
-                                                res, _ = await download_course_material(client, lec['download_path'], save_dir, fname)
-                                                if res: count += 1
-                                                
-                                        # 2. Reference Materials
-                                        for r_idx, r_path in enumerate(lec.get('ref_paths', [])):
-                                            fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
-                                            if check_exists(fname):
-                                                print(f"   [-] Skipped (Exists): {fname[:60]}...")
-                                                skipped += 1
-                                            else:
-                                                res, _ = await download_course_material(client, r_path, save_dir, fname)
-                                                if res: count += 1
-                                                
-                                        # 3. Web Links (Print to CLI)
-                                        if lec.get('web_links'):
-                                            print(f"\n   [🔗] Web Links for: {lec['topic'][:50]}...")
-                                            for link in lec['web_links']:
-                                                print(f"        -> {link}")
-                                            print("") 
-                                            
-                                    # Download General Materials
-                                    for i, gen in enumerate(c_page.get('general', [])):
-                                        fname = format_general_name(selected_code, gen['title'], i+1)
-                                        if check_exists(fname):
-                                            print(f"   [-] Skipped (Exists): {fname[:60]}...")
-                                            skipped += 1
-                                        else:
-                                            res, _ = await download_course_material(client, gen['download_path'], save_dir, fname)
-                                            if res: count += 1
-                                    
-                                    print(f"   [✓] Downloaded {count} new files. (Skipped {skipped})")
-                                            
-                                # --- 2. Download General Material (e.g., G1) ---
-                                elif dl_choice.startswith('G'):
-                                    try:
-                                        g_idx = int(dl_choice[1:]) - 1
-                                        if 0 <= g_idx < len(c_page['general']):
-                                            item = c_page['general'][g_idx]
-                                            fname = format_general_name(selected_code, item['title'], g_idx+1)
-                                            
-                                            if check_exists(fname):
-                                                print(f"   [-] File already exists in Downloads: {fname}")
-                                            else:
-                                                print(f"   [.] Downloading {fname[:60]}...")
-                                                res, filepath = await download_course_material(client, item['download_path'], save_dir, fname)
-                                                if res: print(f"   [✓] Saved to: {filepath}")
-                                                else: print(f"   [x] Failed: {filepath}")
-                                        else:
-                                            print("   [!] Invalid G number.")
-                                    except ValueError: 
-                                        print("   [!] Invalid input format. Use G1, G2, etc.")
-
-                                # --- 3. Download Specific Lecture(s) (Handles comma separated lists) ---
-                                elif all(part.strip().isdigit() for part in dl_choice.split(',')):
-                                    choices = [x.strip() for x in dl_choice.split(',')]
-                                    
-                                    for choice in choices:
-                                        target_sno = int(choice)
-                                        target_lec = next((l for l in c_page['lectures'] if l['s_no'] == target_sno), None)
-                                        
-                                        if target_lec:
-                                            short_date = get_short_date(target_lec.get('date', ''))
-                                            safe_topic = re.sub(r'[\\/*?:"<>|]', "", target_lec['topic']).strip()
-                                            downloads_started = False
-                                            
-                                            # 1. Download Main File
-                                            if target_lec.get('download_path'):
-                                                downloads_started = True
-                                                fname = f"{short_date}_{selected_code}_{safe_topic}"
-                                                if check_exists(fname): 
-                                                    print(f"   [-] Main file already exists: {fname[:60]}...")
-                                                else:
-                                                    print(f"   [.] Downloading Main: {fname[:60]}...")
-                                                    res, filepath = await download_course_material(client, target_lec['download_path'], save_dir, fname)
-                                                    if res: print(f"   [✓] Saved: {filepath}")
-                                                    
-                                            # 2. Download Reference Files
-                                            for r_idx, r_path in enumerate(target_lec.get('ref_paths', [])):
-                                                downloads_started = True
-                                                fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
-                                                if check_exists(fname): 
-                                                    print(f"   [-] Reference file already exists: {fname[:60]}...")
-                                                else:
-                                                    print(f"   [.] Downloading Reference {r_idx+1}...")
-                                                    res, filepath = await download_course_material(client, r_path, save_dir, fname)
-                                                    if res: print(f"   [✓] Saved: {filepath}")
-                                                    
-                                            # 3. Print Web Links to CLI
-                                            if target_lec.get('web_links'):
-                                                downloads_started = True
-                                                print(f"\n   [🔗] Web Links for Lecture {target_sno}:")
-                                                for link in target_lec['web_links']:
-                                                    print(f"        -> {link}")
-                                                    
-                                            # If literally nothing was there
-                                            if not downloads_started:
-                                                print(f"   [!] No materials available for Lecture {target_sno}.")
-                                                
-                                        else:
-                                            print(f"   [!] Lecture S.No {target_sno} not found.")
-                                            
-                                # --- 4. Catch-all ---
-                                else:
-                                    print("   [!] Invalid command. Type a number, multiple numbers separated by commas, G#, or A.")
-                        else:
-                            print("   [!] Invalid selection.")
-                    except ValueError:
-                        print("   [!] Please enter a number.")
-
-            elif choice == '8': # Digital Assignments (Old 13)
-                if not target_sem:
-                    print("[!] No semester selected. Use option 14.")
-                    continue
-                    
-                print(f"   [.] Fetching Digital Assignment Courses...")
-                da_courses = await fetchDACourseList(client, target_sem)
-                
-                if not da_courses:
-                    print("   [!] No digital assignments found for this semester.")
-                    continue
-                    
-                # --- OUTER LOOP: Course Selection ---
-                while True:
-                    print_header("DIGITAL ASSIGNMENTS")
-                    print(f"   {'#':<3} {'CODE':<10} {'COURSE TITLE':<45} {'FACULTY'}")
-                    print("   " + "─" * 90)
-                    for i, c in enumerate(da_courses):
-                        print(f"   {i+1:<3} {c['code']:<10} {c['title'][:43]:<45} {c['faculty'][:25]}")
-                    print("   " + "─" * 90)
-                    print("   0. Back to Main Menu")
-                    
-                    c_sel = input("\n   Select course number: ").strip()
-                    if c_sel == '0': break
-                    
-                    try:
-                        idx = int(c_sel) - 1
-                        if 0 <= idx < len(da_courses):
-                            selected_course = da_courses[idx]
-                            print(f"\n   [.] Fetching assignments for {selected_course['code']}...")
-                            assignments = await fetchDADetails(client, selected_course['class_id'])
-                            
-                            if not assignments:
-                                print(f"   [!] No assignments posted yet for {selected_course['code']}.")
-                                input("\n   Press Enter to continue...")
-                                continue
-                                
-                            # --- INNER LOOP: Assignment Downloads ---
-                            while True:
-                                print(f"\n   ASSIGNMENTS: {selected_course['code']} - {selected_course['title']}")
-                                print(f"   {'#':<3} {'TITLE':<25} {'DUE DATE':<15} {'FILES'}")
-                                print("   " + "─" * 65)
-                                
-                                for asn in assignments:
-                                    files = []
-                                    if asn['qp_link']: files.append("📄 QP")
-                                    if asn['sub_link']: files.append("✅ SUB")
-                                    f_str = ", ".join(files) if files else "None"
-                                    print(f"   {asn['s_no']:<3} {asn['title']:<25} {asn['due_date']:<15} {f_str}")
-                                print("   " + "─" * 65)
-                                print("   [#]  Enter # to Download Files")
-                                print("   [A]  Download ALL Files for this course")
-                                print("   [0]  Go Back")
-                                
-                                a_sel = input("\n   Choice: ").strip().upper()
-                                if a_sel == '0': break
-                                
-                                save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-                                
-                                if a_sel == 'A':
-                                    print(f"   [.] Downloading all available files to {save_dir}...")
-                                    for asn in assignments:
-                                        if asn['qp_link']:
-                                            fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_QP"
-                                            await download_course_material(client, asn['qp_link'], save_dir, fname)
-                                        if asn['sub_link']:
-                                            fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_MySubmission"
-                                            await download_course_material(client, asn['sub_link'], save_dir, fname)
-                                    print("   [✓] Bulk download complete.")
-                                    
-                                elif a_sel.isdigit():
-                                    a_idx = int(a_sel) - 1
-                                    if 0 <= a_idx < len(assignments):
-                                        target_asn = assignments[a_idx]
-                                        
-                                        if target_asn['qp_link']:
-                                            fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_QP"
-                                            print(f"   [.] Downloading Question Paper...")
-                                            res, path = await download_course_material(client, target_asn['qp_link'], save_dir, fname)
-                                            if res: print(f"   [✓] Saved: {path}")
-                                            
-                                        if target_asn['sub_link']:
-                                            fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_MySubmission"
-                                            print(f"   [.] Downloading Your Submission...")
-                                            res, path = await download_course_material(client, target_asn['sub_link'], save_dir, fname)
-                                            if res: print(f"   [✓] Saved: {path}")
-                                            
-                                        if not target_asn['qp_link'] and not target_asn['sub_link']:
-                                            print("   [!] No files available to download for this assignment.")
-                                    else:
-                                        print("   [!] Invalid number.")
-                        else:
-                            print("   [!] Invalid selection.")
-                    except ValueError:
-                        print("   [!] Please enter a valid number.")
-
-            elif choice == '9': # Exam Schedule (Old 7)
-                if not target_sem:
-                    print("[!] No semester selected. Use option 14.")
-                    continue
-                print_header(f"EXAM SCHEDULE - {current_sem_name}")
-                data = await fetchExamSchedule(client, target_sem)
-                print_exam_schedule(data)
-
-            elif choice == '10': # General Outing (Old 11)
-                print_header("GENERAL OUTING SYSTEM")
-                print("   [.] Fetching student details...")
-                data = await fetchGeneralOuting(client)
-                
-                if not data or not data.get('info'):
-                    print("   [!] Could not fetch data. Try logging in again.")
-                    continue
-
-                info = data['info']
-                history = data.get('history', [])
-
-                print(f"\n   STUDENT: {info.get('name')}")
-                print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
-                print("   " + "-" * 60)
-                
-                print("\n   MENU:")
-                print("   1. Apply for New Outing")
-                print("   2. View History / Actions")
-                print("   0. Back")
-                
-                sub = input("\n   Select Option: ").strip()
-                
-                if sub == '2':
-                    printGeneralOuting(history)
-
-                    if history:
-                        print("\n   [P] Download Gate Pass (PDF)")
-                        print("   [D] Delete a Request")
-                        print("   [Enter] Go Back")
-                        
-                        act = input("   Choice: ").strip().upper()
-                        
-                        if act == 'P':
-                            try:
-                                idx = int(input("   Enter IDX to download: ")) - 1
-                                if 0 <= idx < len(history):
-                                    item = history[idx]
-                                    if item['download_url']:
-                                        print("   [.] Downloading...")
-                                        
-                                        home = os.path.expanduser("~")
-                                        download_folder = os.path.join(home, "Downloads")
-                                        clean_date = item['out_date'].replace(" ", "-")
-                                        filename = f"general_outing_{clean_date}.pdf"
-                                        full_path = os.path.join(download_folder, filename)
-                                        res, msg = await download_g_outpass(client, item['download_url'], full_path)
-                                        
-                                        if res: 
-                                            print(f"   ✅ Saved to: {full_path}")
-                                        else:   
-                                            print(f"   ❌ {msg}")
-                                    else:
-                                        print("   [!] No pass available (Must be Approved).")
-                                else:
-                                    print("   [!] Invalid Index.")
-                            except ValueError:
-                                print("   [!] Please enter a number.")
-                        
-                        elif act == 'D':
-                            try:
-                                idx = int(input("   Enter IDX to delete: ")) - 1
-                                if 0 <= idx < len(history):
-                                    item = history[idx]
-                                    if "Wait" in item['status'] or "Pending" in item['status']:
-                                         if item['booking_id']:
-                                             confirm = input(f"   Delete request for {item['place']}? (y/n): ")
-                                             if confirm.lower() == 'y':
-                                                 res, msg = await deleteGeneralOuting(client, item['booking_id'])
-                                                 if res: print(f"   ✅ {msg}")
-                                                 else:   print(f"   ❌ {msg}")
-                                    else:
-                                        print("   [!] Cannot delete. (Only 'Waiting' requests can be deleted)")
-                                else:
-                                    print("   [!] Invalid Index.")
-                            except ValueError:
-                                print("   [!] Please enter a number.")
-
-                elif sub == '1':
-                    print("\n   --- NEW OUTING APPLICATION ---")
-                    print("   ⚠️  NOTE: You must apply at least 24 HOURS in advance.")
-                    print("   [Enter '0' to Cancel and Go Back]")
-                    
-                    try:
-                        place = input("\n   Place of Visit : ").strip()
-                        if place == '0':
-                            print("   [x] Cancelled.")
-                            continue
-
-                        purpose = input("   Purpose         : ").strip()
-                        if purpose == '0':
-                            print("   [x] Cancelled.")
-                            continue
-
-                        print("   (Format: DD-MMM-YYYY, e.g., 11-Feb-2026)")
-                        out_d = input("   Out Date        : ").strip()
-                        if out_d == '0': continue
-
-                        out_t = input("   Out Time (HH:MM): ").strip()
-                        
-                        in_d  = input("   In Date         : ").strip()
-                        in_t  = input("   In Time (HH:MM): ").strip()
-                        
-                        confirm = input("\n   Submit this request? (y/n): ").lower()
-                        if confirm == 'y':
-                            print("\n   [.] Submitting...")
-                            success, msg = await submitGeneralOuting(client, info, place, purpose, out_d, out_t, in_d, in_t)
-                            
-                            if success:
-                                print(f"   ✅ SUCCESS: {msg}")
-                            else:
-                                print(f"   ❌ FAILED: {msg}")
-                        else:
-                            print("   [x] Cancelled.")
-
-                    except Exception as e:
-                        print(f"   [!] Error: {e}")
-
-            elif choice == '11': # Weekend Outing (Old 12)
-                print_header("WEEKEND OUTING SYSTEM")
-                print("   [.] Fetching details...")
-                data = await fetchWeekendOuting(client)
-                
-                if not data:
-                    print("   [!] Could not fetch data. (Check internet or re-login)")
-                    continue
-
-                info = data.get('info', {})
-                history = data.get('history', [])
-                can_apply = data.get('can_apply', True)
-
-                print(f"\n   STUDENT: {info.get('name')}")
-                print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
-                
-                if not can_apply:
-                    print("   STATUS : 🔴 Applications Closed (Tue-Fri Only)")
-                else:
-                    print("   STATUS : 🟢 Applications Open")
-                    
-                print("   " + "-" * 60)
-                
-                while True:
-                    print("\n   MENU:")
-                    print("   1. Apply for Weekend Outing")
-                    print("   2. View History / Delete / Download Outpass")
-                    print("   0. Back")
-                    
-                    sub = input("\n   Select Option: ").strip()
-                    if sub == '0': break
-                    
-                    if sub == '1':
-                        if not can_apply:
-                            print("\n   ⚠️  ACCESS DENIED: Time Restriction")
-                            print("   [!] You can only apply from Tuesday 12:00 AM to Friday 11:59 PM.")
-                            input("   Press Enter to return...")
-                            continue
-                        
-                        print("\n   --- NEW WEEKEND OUTING ---")
-                        print("   [Enter '0' to Cancel at any time]")
-                        
-                        try:
-                            # 1. Strict Place Selection
-                            places = ["Vijayawada", "Guntur", "Tenali", "Eluru", "Others"]
-                            print("\n   Select Place of Visit:")
-                            for i, p in enumerate(places):
-                                print(f"   {i+1}. {p}")
-                            p_idx = input("   Choice: ").strip()
-                            if p_idx == '0': continue
-                            place = places[int(p_idx) - 1]
-                            
-                            # 2. Purpose
-                            purpose = input("\n   Purpose (Max 20 chars): ").strip()
-                            if purpose == '0': continue
-                            
-                            # 3. Date
-                            print("\n   (Format: DD-MMM-YYYY, e.g., 22-Feb-2026)")
-                            print("   *Note: Must be within the next 6 days.")
-                            out_d = input("   Date: ").strip()
-                            if out_d == '0': continue
-                            
-                            # 4. Strict Time Selection
-                            times = [
-                                "9:30 AM- 3:30PM", 
-                                "10:30 AM- 4:30PM", 
-                                "11:30 AM- 5:30PM", 
-                                "12:30 PM- 6:30PM"
-                            ]
-                            print("\n   Select Outing Time:")
-                            for i, t in enumerate(times):
-                                print(f"   {i+1}. {t}")
-                            t_idx = input("   Choice: ").strip()
-                            if t_idx == '0': continue
-                            out_t = times[int(t_idx) - 1]
-                            
-                            # 5. Strict Contact Validation
-                            while True:
-                                contact = input("\n   Contact No (10 digits, starts with 7-9): ").strip()
-                                if contact == '0': break
-                                if re.match(r"^[7-9]\d{9}$", contact):
-                                    break
-                                else:
-                                    print("   [!] Invalid format. Try again.")
-                            if contact == '0': continue
-                            
-                            confirm = input(f"\n   Submit request for {place} on {out_d}? (y/n): ").lower()
-                            if confirm == 'y':
-                                print("\n   [.] Submitting payload...")
-                                success, msg = await submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact)
-                                if success: 
-                                    print(f"   ✅ SUCCESS: {msg}")
-                                    data = await fetchWeekendOuting(client)
-                                    history = data.get('history', [])
-                                else: 
-                                    print(f"   ❌ FAILED: {msg}")
-                            else: 
-                                print("   [x] Cancelled.")
-                                
-                        except (ValueError, IndexError): 
-                            print("   [!] Invalid selection. Please enter the correct number.")
-                        except Exception as e: 
-                            print(f"   [!] Error: {e}")
-
-                    elif sub == '2':
-                        printWeekendOuting(history)
-                        
-                        if history:
-                            print("\n   [#] Type Row Number to Download Outpass")
-                            print("   [D] Delete a Pending Request")
-                            print("   [0] Go Back")
-                            act = input("\n   Choice: ").strip().upper()
-                            
-                            if act == '0' or act == '':
-                                continue
-                                
-                            # HANDLE DELETION
-                            elif act.upper() == 'D':
-                                try:
-                                    idx = int(input("   Enter Row # to delete: ")) - 1
-                                    if 0 <= idx < len(history):
-                                        item = history[idx]
-                                        if "Wait" in item['status'] or "Pending" in item['status']:
-                                            if item.get('booking_id'):
-                                                confirm = input(f"   Delete request for {item.get('place', 'this location')}? (y/n): ")
-                                                if confirm.lower() == 'y':
-                                                    res, msg = await deleteWeekendOuting(client, item['booking_id'])
-                                                    if res: 
-                                                        print(f"   ✅ {msg}")
-                                                        data = await fetchWeekendOuting(client)
-                                                        history = data.get('history', [])
-                                                    else:   
-                                                        print(f"   ❌ {msg}")
-                                            else:
-                                                print("   [!] Error: No booking ID found for this request.")
-                                        else:
-                                            print("   [!] Cannot delete active/processed requests.")
-                                    else:
-                                        print("   [!] Invalid Row Number.")
-                                except ValueError:
-                                    print("   [!] Please enter a valid number.")
-                                    
-                            # HANDLE PDF DOWNLOAD
-                            elif act.isdigit():
-                                idx = int(act) - 1
-                                if 0 <= idx < len(history):
-                                    selected_outing = history[idx]
-                                    if selected_outing['download_link']:
-                                        save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-                                        fname = f"Outpass_{selected_outing['out_date']}_{selected_outing['place']}"
-                                        
-                                        print(f"   [.] Securing Outpass from VTOP servers...")
-                                        res, path = await download_w_outpass(
-                                            client, 
-                                            selected_outing['download_link'], 
-                                            save_dir, 
-                                            fname
-                                        )
-                                        if res: print(f"   [✓] Saved to: {path}")
-                                        else: print(f"   [x] Failed to download Outpass.")
-                                    else:
-                                        print("   [!] Outpass is not available for this request yet.")
-                                else:
-                                    print("   [!] Invalid Row Number.")
-
-            elif choice == '12': # 75% Calculator (NEW)
-                print_header("75% ATTENDANCE CALCULATOR")
-                print("   Calculate how many classes you can bunk or need to attend.")
-                print("   " + "─" * 60)
-                try:
-                    # 1. Ask for Target Percentage (Default to 75 like the HTML)
-                    target = 75.0
-                    # 2. Ask for Current Stats
-                    present = int(input("   Classes Attended (Present): ").strip())
-                    total = int(input("   Total Classes Conducted:    ").strip())
-                    
-                    if total == 0:
-                        print("   [!] Total classes cannot be zero.")
-                        input("\n   Press Enter to continue...")
+                    if not bunk_input:
+                        print("   [!] No dates entered. Returning to menu.")
                         continue
 
-                    current_pct = (present / total) * 100
-                    print("   " + "─" * 60)
-                    print(f"   Current Attendance: {current_pct:.2f}%")
+                    # --- 1. Parse the Dates ---
+                    from datetime import datetime as dt_obj, timedelta
+                    valid_dates = []
+                    current_year = dt_obj.now().year
                     
-                    # 3. The Math Logic
-                    if current_pct >= target:
-                        # Logic: How many can I bunk? 
-                        # Formula: floor((100*Present - Target*Total) / Target)
-                        bunkable = math.floor((100 * present - target * total) / target)
-                        
-                        if bunkable > 0:
-                            print(f"   ✅ You are SAFE!")
-                            print(f"   🎉 You can bunk {int(bunkable)} next classes and stay above {target}%.")
-                            
-                            # Future projection
-                            new_total = total + bunkable
-                            new_pct = (present / new_total) * 100
-                            print(f"      (Attendance will drop to {new_pct:.2f}%)")
-                        else:
-                            print(f"   ⚠️  You are on the edge! You cannot miss any more classes.")
-                            
-                    else:
-                        # Logic: How many must I attend?
-                        # Formula: ceil((Target*Total - 100*Present) / (100 - Target))
-                        needed = math.ceil((target * total - 100 * present) / (100 - target))
-                        
-                        print(f"   ❌ You are in the DANGER ZONE!")
-                        print(f"   🚑 You must attend {int(needed)} next classes continuously.")
-                        
-                        # Future projection
-                        new_present = present + needed
-                        new_total = total + needed
-                        new_pct = (new_present / new_total) * 100
-                        print(f"      (Attendance will recover to {new_pct:.2f}%)")
-                        
-                except ValueError:
-                    print("   [!] Invalid input. Please enter numbers only.")
-                except ZeroDivisionError:
-                    print("   [!] Target cannot be 100% (leads to division by zero).")
-                
-                input("\n   Press Enter to return...")
-
-            elif choice == '13': # Profile (Old 1)
-                print_header("STUDENT PROFILE")
-                print_profile(profile_data)
-
-            elif choice == '14': # Change Sem (Old 8)
-                if not available_sems:
-                    print("   ...No semester data available. Re-scraping...")
-                    available_sems = await fetchSemesters(client)
-                if available_sems:
-                    print_header("SELECT SEMESTER")
-                    for i, s in enumerate(available_sems):
-                        print(f"   {i+1}. {s['name']}")
-                    sel = input("\nSelect a semester number (0 to cancel): ").strip()
-                    if sel == '0': continue
                     try:
-                        idx = int(sel) - 1
-                        if 0 <= idx < len(available_sems):
-                            target_sem = available_sems[idx]['id']
-                            current_sem_name = available_sems[idx]['name']
-                            print(f"[+] Active Semester set to: {current_sem_name}")
+                        if 'to' in bunk_input.lower():
+                            start_str, end_str = [x.strip() for x in bunk_input.lower().split('to')]
+                            start_dt = dt_obj.strptime(f"{start_str}-{current_year}", "%d-%m-%Y")
+                            end_dt = dt_obj.strptime(f"{end_str}-{current_year}", "%d-%m-%Y")
+                            delta = end_dt - start_dt
+                            
+                            if delta.days < 0:
+                                print("   [!] End date cannot be before start date.")
+                                continue
+                                
+                            for i in range(delta.days + 1):
+                                valid_dates.append(start_dt + timedelta(days=i))
                         else:
-                            print("[!] Invalid selection.")
-                    except ValueError:
-                        print("[!] Please enter a valid number.")
+                            date_strs = [x.strip() for x in bunk_input.split(',')]
+                            for ds in date_strs:
+                                valid_dates.append(dt_obj.strptime(f"{ds}-{current_year}", "%d-%m-%Y"))
+                    except Exception as e:
+                        print(f"   [!] Invalid date format. Use DD-MM. (Error: {e})")
+                        continue
 
-            elif choice == '15':
-            
-                print("\n   =====================================")
-                print("   🔄 UPDATE SAVED CREDENTIALS")
-                print("   =======================================")
-                
-                new_user = input("   👉 Enter Registration Number (e.g., 24BCE7058): ").strip().upper()
-                new_pass = pwinput.pwinput(prompt="   👉 Enter New VTOP Password: ", mask="*").strip()
-                
-                if not new_user or not new_pass:
-                    print("   [!] Fields cannot be empty. Update cancelled.")
-                    continue
+                    print(f"\n   [.] Simulating {len(valid_dates)} days. Fetching VTOP data...")
+
+                    # --- 2. Resilient Timetable Fetch ---
+                    timetable_data = None
+                    for attempt in range(1, 4):
+                        try:
+                            timetable_data = await fetchTimetable(client, target_sem)
+                            break 
+                        except Exception as e:
+                            if attempt < 3:
+                                print(f"   [!] Timetable dropped (Attempt {attempt}/3). Waking up socket...")
+                                import asyncio
+                                await asyncio.sleep(2)
+                                try:
+                                    await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
+                                except:
+                                    pass
+                            else:
+                                print(f"   [!] Timetable fetch error: {e}")
+
+                    if not timetable_data:
+                        print("   [x] Aborting simulation: Network timed out on Timetable.")
+                        continue
+
+                    # --- 3. Resilient Attendance Fetch ---
+                    attendance_data = None
+                    for attempt in range(1, 4):
+                        try:
+                            attendance_data = await fetchAttendance(client, target_sem)
+                            break 
+                        except Exception as e:
+                            if attempt < 3:
+                                print(f"   [!] Attendance dropped (Attempt {attempt}/3). Waking up socket...")
+                                import asyncio
+                                await asyncio.sleep(2)
+                                try:
+                                    await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
+                                except:
+                                    pass
+                            else:
+                                print(f"   [!] Attendance fetch error: {e}")
+
+                    if not attendance_data:
+                        print("   [x] Aborting simulation: Network timed out on Attendance.")
+                        continue
+
+                    # ==========================================
+                    # 4. THE 1-SECOND DEBUG STEP
+                    # ==========================================
+                    print("\n   [DEBUG] Raw Attendance Payload for first subject:")
+                    print(attendance_data[0])
+                    input("   [DEBUG] Press Enter to continue...")
+
+                    # --- 5. Run the Simulation ---
+                    print("   [.] Crunching the numbers...")
                     
-                print("\n   --- Verify Your Details ---")
-                print(f"   Registration No: {new_user}")
-                print(f"   Password:        {'*' * len(new_pass)}")
-                
-                confirm = input("\n   Save new credentials and restart? (y/n): ").strip().lower()
-                
-                if confirm == 'y':
-                    with open("credentials.txt", "w") as f:
-                        f.write(f"{new_user}\n{new_pass}\n")
-                    
-                    print("   [✓] Credentials updated successfully!")
-                    print("   [🚀] Restarting CLI to apply changes...\n")
-                    
-                    # Instantly restarts the script to trigger a fresh login!
-                    os.execv(sys.executable, ['python'] + sys.argv)
+                    try:
+                        import services
+                        report = services.simulate_multi_day_bunk(
+                            valid_dates, 
+                            timetable_data, 
+                            attendance_data, 
+                            {} # Blocked dates dictionary
+                        )
+                        print(report)
+                    except Exception as e:
+                        print(f"   [!] Math Engine Error: {e}")
+                        
+                    input("\n   Press Enter to return to menu...")
+
                 else:
-                    print("   [!] Update cancelled. Kept old credentials.")
+                    print("   [!] Invalid selection. Please choose a number from the menu.")
+
 
 if __name__ == "__main__":
-    # Add this line right here!
-    check_for_updates()
-    
-    # Then your normal startup code...
+    #check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
