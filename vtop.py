@@ -561,58 +561,107 @@ def printWeekendOuting(history):
     print("   " + "─" * 95)
     
 async def main():
-    reg_no, password = get_credentials("credentials.txt")
-    print(f"[-] Connecting to V-TOP as {reg_no}...")
-    
-    async with VtopClient(reg_no, password) as client:
-        if not await vtopClientLogin(client):
-            print(f"[!] Login Failed.")
-            return
-
-        # Fetch Initial Data
-        await client._client.get("https://vtop.vitap.ac.in/vtop/content")
-        available_sems = await fetchSemesters(client)
-        profile_data = await fetchProfile(client)
+    while True:
+        reg_no, password = get_credentials("credentials.txt")
+        print(f"\n[-] Connecting to V-TOP as {reg_no}...")
         
-        student_name = profile_data.get("basic", {}).get("name", "Student")
-        target_sem = available_sems[0]['id'] if available_sems else None
-        current_sem_name = available_sems[0]['name'] if available_sems else "None"
+        # Open the session
+        async with VtopClient(reg_no, password) as client:
+            
+            # If login fails...
+            if not await vtopClientLogin(client):
+                print(f"[!] Login Failed. Incorrect Registration Number or Password.")
+                
+                # Trash the corrupted credentials file
+                if os.path.exists("credentials.txt"):
+                    os.remove("credentials.txt")
+                    
+                print("[-] Trashed bad credentials. Let's try again...\n")
+                continue # Loops back to the top, triggering the Setup Wizard!
 
-        print(f"\n{'='*55}")
-        print(f" SUCCESS  : Logged in as {student_name}")
-        print(f" REG NO   : {reg_no}")
-        print(f" CURRENT SEM : {current_sem_name}")
-        print(f"{'='*55}")
+            # --- If Login Succeeds ---
+            # Fetch Initial Data
+            await client._client.get("https://vtop.vitap.ac.in/vtop/content")
+            available_sems = await fetchSemesters(client)
+            profile_data = await fetchProfile(client)
+            
+            student_name = profile_data.get("basic", {}).get("name", "Student")
+            target_sem = available_sems[0]['id'] if available_sems else None
+            current_sem_name = available_sems[0]['name'] if available_sems else "None"
 
+            print(f"\n{'='*55}")
+            print(f" SUCCESS  : Logged in as {student_name}")
+            print(f" REG NO   : {reg_no}")
+            print(f" CURRENT SEM : {current_sem_name}")
+            print(f"{'='*55}\n")
+            
+            while True:
+                print_header("MAIN MENU")
+                print(f"   Logged in as: {client.username or 'Unknown'}")
+                print("   " + "─" * 40)
+                
+                print("   [ ACADEMICS ]")
+                print("   1.  Today's Schedule")
+                print("   2.  Full Timetable")
+                print("   3.  Attendance Record")
+                print("   4.  Internal Marks")
+                print("   5.  Grade History (Transcript)")
+                print("   6.  Credits Distribution")
+                print("   7.  Course Page (Lecture Plan & Materials)")
+                print("   8.  Digital Assignments")
+                print("   9.  Exam Schedule")
+                
+                print("\n   [ HOSTEL ]")
+                print("   10. General Outing")
+                print("   11. Weekend Outing")
+                
+                print("\n   [ TOOLS ]")
+                print("   12. Attendance Calculator")
+                print("   13. Student Profile")
+                print("   14. Change Semester")
+                print("   15. Update Credentials")
 
-        while True:
-            # --- NEW SORTED MENU ---
-            print_header("MAIN MENU")
-            print(f"   Logged in as: {client.username or 'Unknown'}")
-            print("   " + "─" * 40)
-            
-            print("   [ ACADEMICS ]")
-            print("   1.  Today's Schedule")
-            print("   2.  Full Timetable")
-            print("   3.  Attendance Record")
-            print("   4.  Internal Marks")
-            print("   5.  Grade History (Transcript)")
-            print("   6.  Credits Distribution")
-            print("   7.  Course Page (Lecture Plan & Materials)")
-            print("   8.  Digital Assignments")
-            print("   9.  Exam Schedule")
-            
-            print("\n   [ HOSTEL ]")
-            print("   10. General Outing")
-            print("   11. Weekend Outing")
-            
-            print("\n   [ TOOLS ]")
-            print("   12. Attendance Calculator")
-            print("   13. Student Profile")
-            print("   14. Change Semester")
-            
-            print("\n   0.  Exit")
-            print("   " + "─" * 40)
+                print("\n   0.  Exit")
+                print("   " + "─" * 40)
+                
+                choice = input("\n   Select Option: ").strip()
+                
+                # --- MENU LOGIC ---
+                if choice == '0':
+                    print("   [.] Exiting...")
+                    return # Using return here cleanly shuts down the entire main() async function
+                
+                # ... (Your other choices 1 through 14) ...
+                
+                elif choice == '15':
+                    print("\n   =======================================")
+                    print("   🔄 UPDATE SAVED CREDENTIALS")
+                    print("   =======================================")
+                    
+                    new_user = input("   👉 Enter Registration Number (e.g., 24BCE7058): ").strip().upper()
+                    new_pass = pwinput.pwinput(prompt="   👉 Enter New VTOP Password: ", mask="*").strip()
+                    
+                    if not new_user or not new_pass:
+                        print("   [!] Fields cannot be empty. Update cancelled.")
+                        continue
+                        
+                    print("\n   --- Verify Your Details ---")
+                    print(f"   Registration No: {new_user}")
+                    print(f"   Password:        {'*' * len(new_pass)}")
+                    
+                    confirm = input("\n   Save new credentials and restart? (y/n): ").strip().lower()
+                    
+                    if confirm == 'y':
+                        with open("credentials.txt", "w") as f:
+                            f.write(f"{new_user}\n{new_pass}\n")
+                        
+                        print("   [✓] Credentials updated successfully!")
+                        print("   [🚀] Restarting CLI to apply changes...\n")
+                        
+                        # Instantly restarts the script to trigger a fresh login!
+                        os.execv(sys.executable, ['python'] + sys.argv)
+                    else:
+                        print("   [!] Update cancelled. Kept old credentials.")
             
             choice = input(f"\n[{reg_no}] Enter choice (0-14): ").strip()
 
@@ -1411,6 +1460,37 @@ async def main():
                             print("[!] Invalid selection.")
                     except ValueError:
                         print("[!] Please enter a valid number.")
+
+            elif choice == '15':
+            
+                print("\n   =====================================")
+                print("   🔄 UPDATE SAVED CREDENTIALS")
+                print("   =======================================")
+                
+                new_user = input("   👉 Enter Registration Number (e.g., 24BCE7058): ").strip().upper()
+                new_pass = pwinput.pwinput(prompt="   👉 Enter New VTOP Password: ", mask="*").strip()
+                
+                if not new_user or not new_pass:
+                    print("   [!] Fields cannot be empty. Update cancelled.")
+                    continue
+                    
+                print("\n   --- Verify Your Details ---")
+                print(f"   Registration No: {new_user}")
+                print(f"   Password:        {'*' * len(new_pass)}")
+                
+                confirm = input("\n   Save new credentials and restart? (y/n): ").strip().lower()
+                
+                if confirm == 'y':
+                    with open("credentials.txt", "w") as f:
+                        f.write(f"{new_user}\n{new_pass}\n")
+                    
+                    print("   [✓] Credentials updated successfully!")
+                    print("   [🚀] Restarting CLI to apply changes...\n")
+                    
+                    # Instantly restarts the script to trigger a fresh login!
+                    os.execv(sys.executable, ['python'] + sys.argv)
+                else:
+                    print("   [!] Update cancelled. Kept old credentials.")
 
 if __name__ == "__main__":
     # Add this line right here!
