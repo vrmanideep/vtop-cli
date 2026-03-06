@@ -41,6 +41,7 @@ import sys
 import subprocess
 import os
 import getpass
+import traceback
 import glob
 import re
 import math
@@ -52,7 +53,7 @@ from services import *
 
 console = Console()
 # --- CONFIGURATION ---
-CURRENT_VERSION = "3.1"
+CURRENT_VERSION = "4.0"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
@@ -555,6 +556,7 @@ def printWeekendOuting(history):
     print("   " + "─" * 95)
     
 async def main():
+    global asyncio
     while True:
         reg_no, password = get_credentials("credentials.txt")
         print(f"\n[-] Connecting to V-TOP as {reg_no}...")
@@ -1453,116 +1455,172 @@ async def main():
                         print("   [!] Update cancelled. Kept old credentials.")
                 
                 elif choice == '16':
-                    print("\n   [ BUNK SIMULATOR ]")
-                    print("   Formats: '05-03, 10-03' OR '05-03 to 15-03'")
-                    bunk_input = input("   Enter dates/range to bunk: ").strip()
-
-                    if not bunk_input:
-                        print("   [!] No dates entered. Returning to menu.")
-                        continue
-
-                    # --- 1. Parse the Dates ---
-                    from datetime import datetime as dt_obj, timedelta
-                    valid_dates = []
-                    current_year = dt_obj.now().year
-                    
                     try:
-                        if 'to' in bunk_input.lower():
-                            start_str, end_str = [x.strip() for x in bunk_input.lower().split('to')]
-                            start_dt = dt_obj.strptime(f"{start_str}-{current_year}", "%d-%m-%Y")
-                            end_dt = dt_obj.strptime(f"{end_str}-{current_year}", "%d-%m-%Y")
-                            delta = end_dt - start_dt
-                            
-                            if delta.days < 0:
-                                print("   [!] End date cannot be before start date.")
-                                continue
-                                
-                            for i in range(delta.days + 1):
-                                valid_dates.append(start_dt + timedelta(days=i))
-                        else:
-                            date_strs = [x.strip() for x in bunk_input.split(',')]
-                            for ds in date_strs:
-                                valid_dates.append(dt_obj.strptime(f"{ds}-{current_year}", "%d-%m-%Y"))
-                    except Exception as e:
-                        print(f"   [!] Invalid date format. Use DD-MM. (Error: {e})")
-                        continue
-
-                    print(f"\n   [.] Simulating {len(valid_dates)} days. Fetching VTOP data...")
-
-                    # --- 2. Resilient Timetable Fetch ---
-                    timetable_data = None
-                    for attempt in range(1, 4):
-                        try:
-                            timetable_data = await fetchTimetable(client, target_sem)
-                            break 
-                        except Exception as e:
-                            if attempt < 3:
-                                print(f"   [!] Timetable dropped (Attempt {attempt}/3). Waking up socket...")
-                                import asyncio
-                                await asyncio.sleep(2)
-                                try:
-                                    await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
-                                except:
-                                    pass
-                            else:
-                                print(f"   [!] Timetable fetch error: {e}")
-
-                    if not timetable_data:
-                        print("   [x] Aborting simulation: Network timed out on Timetable.")
-                        continue
-
-                    # --- 3. Resilient Attendance Fetch ---
-                    attendance_data = None
-                    for attempt in range(1, 4):
-                        try:
-                            attendance_data = await fetchAttendance(client, target_sem)
-                            break 
-                        except Exception as e:
-                            if attempt < 3:
-                                print(f"   [!] Attendance dropped (Attempt {attempt}/3). Waking up socket...")
-                                import asyncio
-                                await asyncio.sleep(2)
-                                try:
-                                    await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
-                                except:
-                                    pass
-                            else:
-                                print(f"   [!] Attendance fetch error: {e}")
-
-                    if not attendance_data:
-                        print("   [x] Aborting simulation: Network timed out on Attendance.")
-                        continue
-
-                    # ==========================================
-                    # 4. THE 1-SECOND DEBUG STEP
-                    # ==========================================
-                    print("\n   [DEBUG] Raw Attendance Payload for first subject:")
-                    print(attendance_data[0])
-                    input("   [DEBUG] Press Enter to continue...")
-
-                    # --- 5. Run the Simulation ---
-                    print("   [.] Crunching the numbers...")
-                    
-                    try:
+                        import os
+                        import json
+                        import asyncio
+                        import traceback
+                        from datetime import datetime as dt_obj, timedelta
                         import services
+
+                        print("\n   [ BUNK SIMULATOR ]")
+                        
+                        # --- PRE-FLIGHT CALENDAR DISPLAY ---
+                        current_year = dt_obj.now().year
+                        if os.path.exists("bunk_cache.json"):
+                            try:
+                                with open("bunk_cache.json", "r") as f:
+                                    cache_data = json.load(f)
+                                    # Check specifically for the 'blocked_dates' wrapper
+                                    if isinstance(cache_data, dict) and "blocked_dates" in cache_data:
+                                        b_dates = cache_data["blocked_dates"]
+                                        if b_dates:
+                                            print("   [i] Active Exclusions (Holidays & Exams):")
+                                            for d_str, purpose in b_dates.items():
+                                                try:
+                                                    day_name = dt_obj.strptime(f"{d_str}-{current_year}", "%d-%m-%Y").strftime("%A")
+                                                    print(f"       {d_str} -- {day_name:<9} -- {purpose}")
+                                                except Exception:
+                                                    print(f"       {d_str} -- {'Unknown':<9} -- {purpose}")
+                                            print("   " + "-"*45)
+                            except Exception:
+                                pass # Silently skip display if JSON is corrupted
+
+                        print("   Formats: '05-03, 10-03' OR '05-03 to 15-03'")
+                        bunk_input = input("   Enter dates/range to bunk: ").strip()
+
+                        if not bunk_input:
+                            print("   [!] No dates entered. Returning to menu.")
+                            continue
+
+                        # --- 1. Parse Dates ---
+                        valid_dates = []
+                        try:
+                            if 'to' in bunk_input.lower():
+                                start_str, end_str = [x.strip() for x in bunk_input.lower().split('to')]
+                                start_dt = dt_obj.strptime(f"{start_str}-{current_year}", "%d-%m-%Y")
+                                end_dt = dt_obj.strptime(f"{end_str}-{current_year}", "%d-%m-%Y")
+                                delta = end_dt - start_dt
+                                
+                                if delta.days < 0:
+                                    print("   [!] End date cannot be before start date.")
+                                    continue
+                                    
+                                for i in range(delta.days + 1):
+                                    valid_dates.append(start_dt + timedelta(days=i))
+                            else:
+                                date_strs = [x.strip() for x in bunk_input.split(',')]
+                                for ds in date_strs:
+                                    valid_dates.append(dt_obj.strptime(f"{ds}-{current_year}", "%d-%m-%Y"))
+                        except Exception as e:
+                            print(f"   [!] Invalid date format. Use DD-MM. (Error: {e})")
+                            continue
+
+                        print(f"\n   [.] Simulating {len(valid_dates)} days. Fetching VTOP data...")
+
+                        # --- 2. Fetch Timetable ---
+                        timetable_data = None
+                        for attempt in range(1, 4):
+                            try:
+                                timetable_data = await fetchTimetable(client, target_sem)
+                                break 
+                            except Exception as e:
+                                if attempt < 3:
+                                    print(f"   [!] Timetable dropped (Attempt {attempt}/3). Waking up socket...")
+                                    await asyncio.sleep(2)
+                                    try: await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
+                                    except: pass
+                                else:
+                                    print(f"   [!] Timetable fetch error: {e}")
+
+                        if not timetable_data:
+                            print("   [x] Aborting simulation: Network timed out on Timetable.")
+                            continue
+
+                        # --- 3. Fetch Attendance Summary ---
+                        attendance_data = None
+                        for attempt in range(1, 4):
+                            try:
+                                attendance_data = await fetchAttendance(client, target_sem)
+                                break 
+                            except Exception as e:
+                                if attempt < 3:
+                                    print(f"   [!] Attendance dropped (Attempt {attempt}/3). Waking up socket...")
+                                    await asyncio.sleep(2)
+                                    try: await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
+                                    except: pass
+                                else:
+                                    print(f"   [!] Attendance fetch error: {e}")
+
+                        if not attendance_data:
+                            print("   [x] Aborting simulation: Network timed out on Attendance.")
+                            continue
+
+                        # --- 4. Sync Exact Timelines (Detailed Fetch) ---
+                        print(f"   [.] Syncing exact timelines for {len(attendance_data)} subjects... (Takes a few seconds)")
+                        
+                        for sub in attendance_data:
+                            c_id = sub.get('course_id')
+                            type_id = sub.get('type_id') or sub.get('type_code')
+                            sub['exact_last_date'] = None 
+                            
+                            if c_id and type_id:
+                                for attempt in range(2): 
+                                    try:
+                                        history = await fetchAttendanceDetail(client, target_sem, c_id, type_id)
+                                        if history:
+                                            def p_date(x):
+                                                try: return dt_obj.strptime(x['date'], "%d-%b-%Y")
+                                                except:
+                                                    try: return dt_obj.strptime(x['date'], "%d-%m-%Y")
+                                                    except: return dt_obj.min
+                                                    
+                                            history.sort(key=p_date)
+                                            sub['exact_last_date'] = history[-1].get('date') 
+                                        break 
+                                    except Exception as e:
+                                        print(f"   [!] API Error on {sub.get('course_code')}: {e}")
+                                        await asyncio.sleep(0.5)
+
+                        # --- 5. Run the Simulation ---
+                        print("   [.] Crunching the numbers...")
+                        
+                        academic_calendar_blocks = {}
+                        if os.path.exists("bunk_cache.json"):
+                            try:
+                                with open("bunk_cache.json", "r") as f:
+                                    cache_data = json.load(f)
+                                    # Properly parse the wrapped format to pass directly into services.py
+                                    if isinstance(cache_data, dict) and "blocked_dates" in cache_data:
+                                        cache_data = cache_data["blocked_dates"]
+                                        
+                                    if isinstance(cache_data, list):
+                                        for date_str in cache_data:
+                                            academic_calendar_blocks[date_str] = "Cached/Excluded Date"
+                                    elif isinstance(cache_data, dict):
+                                        for date_str, reason in cache_data.items():
+                                            academic_calendar_blocks[date_str] = str(reason)
+                            except Exception as e:
+                                print(f"   [!] Warning: Could not read bunk_cache.json: {e}")
+
                         report = services.simulate_multi_day_bunk(
                             valid_dates, 
                             timetable_data, 
                             attendance_data, 
-                            {} # Blocked dates dictionary
+                            academic_calendar_blocks
                         )
                         print(report)
-                    except Exception as e:
-                        print(f"   [!] Math Engine Error: {e}")
                         
-                    input("\n   Press Enter to return to menu...")
+                        input("\n   Press Enter to return to menu...")
 
-                else:
-                    print("   [!] Invalid selection. Please choose a number from the menu.")
-
+                    except BaseException as fatal_error:
+                        import traceback
+                        print(f"\n   [!!!] ABSOLUTE FATAL ERROR IN BLOCK 16: {fatal_error}")
+                        traceback.print_exc()
+                        input("\n   [DEBUG] Read the error above and press Enter to return to menu...")
 
 if __name__ == "__main__":
-    #check_for_updates()
+    check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

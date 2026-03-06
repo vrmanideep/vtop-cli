@@ -1446,7 +1446,6 @@ async def fetchDADetails(client, class_id):
         return []
 
 def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocked_dates):
-    import re
     from datetime import datetime as dt_obj, timedelta
 
     # 1. Clean holidays
@@ -1464,33 +1463,25 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
     sim_att = {}
     original_data = {}
     classes_missed = 0
-    bunk_log_set = set() 
 
     # ==========================================
-    # 2. THE COURSE-BY-COURSE LOOP
+    # 2. THE FULL TIMELINE PROJECTOR
     # ==========================================
     for att in attendance_data:
         key = att['course_code'] + att['type_code']
         
-        # --- THE REGEX DATE HUNTER ---
-        # Converts the dictionary to a string and hunts for DD-MM-YYYY
-        # --- THE SMART DATE HUNTER ---
-        # Matches both 04-03-2026 and 04-Mar-2026 in the raw data
-        raw_date_match = re.search(r'(\d{2}-([a-zA-Z]{3}|\d{2})-\d{4})', str(att))
+        # Read the exact date fetched by vtop.py
+        exact_date = att.get('exact_last_date')
         
-        if raw_date_match:
-            last_upd_str = raw_date_match.group(1)
+        if exact_date:
             try:
-                # Try standard DD-MM-YYYY first
-                last_upd_dt = dt_obj.strptime(last_upd_str, "%d-%m-%Y").replace(hour=0, minute=0, second=0, microsecond=0)
+                last_upd_dt = dt_obj.strptime(exact_date, "%d-%b-%Y").replace(hour=0, minute=0, second=0, microsecond=0)
             except ValueError:
                 try:
-                    # Try DD-MMM-YYYY (e.g., 04-Mar-2026)
-                    last_upd_dt = dt_obj.strptime(last_upd_str, "%d-%b-%Y").replace(hour=0, minute=0, second=0, microsecond=0)
+                    last_upd_dt = dt_obj.strptime(exact_date, "%d-%m-%Y").replace(hour=0, minute=0, second=0, microsecond=0)
                 except ValueError:
                     last_upd_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
         else:
-            # Fallback only if absolutely no date is found
             last_upd_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
         val = {
@@ -1499,12 +1490,14 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
             "attended": int(att['attended']),
             "total": int(att['total']),
             "current_pct": float(att['percentage']),
-            "last_updated": last_upd_dt
+            "last_updated": last_upd_dt,
+            "gap_classes": 0,
+            "gap_breakdown": [],      # Tracks the specific attended classes
+            "missed_breakdown": []    # Tracks the specific bunked classes
         }
         sim_att[key] = val.copy()
         original_data[key] = val.copy()
 
-        # Start simulation the day AFTER this specific course was updated
         curr_dt = last_upd_dt + timedelta(days=1)
         
         while curr_dt <= max_bunk_date:
@@ -1512,15 +1505,13 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
             date_str_full = curr_dt.strftime("%d-%m")
             date_str_short = f"{curr_dt.day}-{curr_dt.month}"
             
-            # Check for holiday
+            # Skip holidays and exams (pulled from bunk_cache.json)
             reason = clean_blocked.get(date_str_full) or clean_blocked.get(date_str_short)
             if reason:
-                if date_str_full in bunk_set:
-                    bunk_log_set.add(f"   🏖️ {date_str_full} ({day_name:<9}) -- Skipped: {reason}")
                 curr_dt += timedelta(days=1)
                 continue
             
-            # Check if THIS course happens today
+            # Check timetable for this subject
             day_classes = timetable_data.get(day_name, [])
             course_happens_today = False
             penalty = 1
@@ -1531,44 +1522,60 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
                     penalty = 2 if cls['course_type'] in ['ELA', 'LO'] else 1
                     break 
             
-            # Apply logic
             if course_happens_today:
-                is_bunk_day = date_str_full in bunk_set
-                if is_bunk_day:
+                if date_str_full in bunk_set:
+                    # BUNK DAY
                     sim_att[key]['total'] += penalty
                     classes_missed += penalty
-                    bunk_log_set.add(f"   📅 {date_str_full} ({day_name:<9}) -- Bunked Classes")
+                    sim_att[key]['missed_breakdown'].append(f"{date_str_full} ({day_name[:3]}) : +{penalty} missed")
                 else:
+                    # GAP DAY
                     sim_att[key]['total'] += penalty
                     sim_att[key]['attended'] += penalty
+                    sim_att[key]['gap_classes'] += penalty
+                    sim_att[key]['gap_breakdown'].append(f"{date_str_full} ({day_name[:3]}) : +{penalty}")
             
             curr_dt += timedelta(days=1)
 
     # ==========================================
-    # 3. GENERATE CLEAN REPORT
+    # 3. GENERATE SUBJECT-WISE REPORT
     # ==========================================
     result_msg = "\n   " + "="*55 + "\n"
-    result_msg += "   📉 BUNK SIMULATION REPORT\n"
+    result_msg += "   📉 SUBJECT-WISE BUNK CALCULATION\n"
     result_msg += "   " + "="*55 + "\n\n"
     
-    result_msg += "   [ SUMMARY ]\n"
-    for log in sorted(list(bunk_log_set)):
-        result_msg += log + "\n"
-        
-    result_msg += "\n   --- FINAL IMPACT ---\n"
-    
+    impact_found = False
     for key in sim_att:
         curr = original_data[key]
         new = sim_att[key]
         
         if new['total'] > curr['total']:
+            impact_found = True
             new_pct = (new['attended'] / new['total']) * 100
             alert = " ⚠️ DANGER" if new_pct < 75 else ""
             
             upd_str = curr['last_updated'].strftime('%d-%m')
             result_msg += f"   📘 {new['code']} ({new['type']})\n"
             result_msg += f"   ├ Current : {curr['current_pct']:.0f}% ({curr['attended']}/{curr['total']}) [Upd: {upd_str}]\n"
-            result_msg += f"   └ New     : {new_pct:.0f}% ({new['attended']}/{new['total']}){alert}\n\n"
+            
+            # Show specific Gap Classes
+            if new['gap_classes'] > 0:
+                result_msg += f"   ├ In-Between : +{new['gap_classes']} classes (Assuming 100% attendance)\n"
+                for g_log in new['gap_breakdown']:
+                    result_msg += f"   │  ├ {g_log}\n"
+            
+            # Show specific Missed Classes
+            if new['missed_breakdown']:
+                result_msg += f"   ├ Bunking :\n"
+                for m_log in new['missed_breakdown']:
+                    result_msg += f"   │  ├ {m_log}\n"
+                
+            result_msg += f"   └ Projected: {new_pct:.0f}% ({new['attended']}/{new['total']}){alert}\n\n"
 
-    result_msg += f"   Total attendance periods missed: {classes_missed}"
+    if not impact_found:
+        result_msg += "   ✅ No attendance changes detected for this timeframe.\n"
+    else:
+        result_msg += f"   Total attendance periods skipped: {classes_missed}"
+
     return result_msg
+
