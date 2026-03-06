@@ -651,14 +651,16 @@ async def main():
             target_sem = available_sems[0]['id'] if available_sems else None
             current_sem_name = available_sems[0]['name'] if available_sems else "None"
 
+            print(f"{'='*65}\n")
+            print(f" NAME:       : {student_name}")
             print(f" REG NO      : {reg_no}")
             print(f" CURRENT SEM : {current_sem_name}")
-            print(f"{'='*55}\n")
+            print(f"{'='*65}\n")
             
             
             while True:
                 print_header("MAIN MENU")
-                print(f"   Logged in as: {client.username or 'Unknown'}")
+                #print(f"   Logged in as: {client.username or 'Unknown'}")
                 print("   " + "─" * 40)
                 
                 print("   [ ACADEMICS ]")
