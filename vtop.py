@@ -60,6 +60,7 @@ SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.
 def check_for_updates():
     import urllib.request
     # 1. Subtle check message
+    print("\n")
     print("   [.] Checking for updates...", end="\r") 
     try:
         # Add a strict 2-second timeout to the request
@@ -82,8 +83,22 @@ def check_for_updates():
                         services_code = response.read().decode('utf-8')
                     with open("services.py", 'w', encoding='utf-8') as f:
                         f.write(services_code)
-                    print("   ✅ Update complete! Restarting...             ")
-                    sys.exit()
+                    # The \n breaks it out of the \r trap
+                    print("\n   ✅ Update complete! Restarting...             \n")
+                    
+                    time.sleep(1.5) 
+                    
+                    # 1. Force the terminal to render the text right now
+                    sys.stdout.flush()
+                    
+                    # 2. Clear the screen
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    
+                    # 3. Double-tap flush to ensure the clear command executes BEFORE the restart
+                    sys.stdout.flush()
+                    
+                    # 4. Boot fresh
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
             else:
                 print(" " * 50, end="\r")
     except Exception:
@@ -611,11 +626,6 @@ async def main():
                         timeout=15.0,
                         follow_redirects=True
                     )
-                    
-                    # Debug dump - will include status code now so we know exactly what happened
-                    with open("debug_vtop.html", "w", encoding="utf-8") as f:
-                        f.write(f"\n")
-                        f.write(content_resp.text)
                         
                     if content_resp.status_code == 200:
                         break
@@ -677,7 +687,8 @@ async def main():
                 print("   " + "─" * 40)
                 
                 # --- SINGLE INPUT PROMPT ---
-                choice = input(f"\n[{reg_no}] Enter choice (0-16): ").strip()
+                print("", end="\n", flush=True) # Forces the terminal buffer to stabilize
+                choice = input(f"[{reg_no}] Enter choice (0-16): ").strip()
                 
                 # --- MENU LOGIC ---
                 if choice == '0':
