@@ -1452,7 +1452,7 @@ async def main():
                     except Exception as e: print(f"   [!] Simulation error: {e}")
 
 if __name__ == "__main__":
-    #check_for_updates()
+    check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
