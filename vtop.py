@@ -245,7 +245,7 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                 print(f"        [!] Detail fetch error: {e}")
         else:
             print("        [!] Cannot fetch details (ID missing).")
-        print("   " + "-" * 40)
+        print("   " + "-" * 50)
 
 def print_attendance(data):
     if not data:
@@ -572,30 +572,26 @@ def printWeekendOuting(history):
     
 async def main():
     global asyncio
+    
+    # --- THE MASTER REBOOT LOOP ---
     while True:
         reg_no, password = get_credentials("credentials.txt")
         print(f"\n[-] Connecting to V-TOP as {reg_no}...")
         
         login_success = False
         
-        # 1. Open the session. Everything must happen INSIDE this block.
+        # 1. Create a BRAND NEW socket connection
         async with VtopClient(reg_no, password) as client:
             
-            # --- THE AUTO-REBUILDER LOOP ---
-            for auto_retry in range(1, 4):
-                print(f"   [~] Session Attempt {auto_retry}/3...")
-                try:
-                    if await vtopClientLogin(client):
-                        login_success = True
-                        break # Success! Break the auto-retry loop
-                    else:
-                        print(f"   [!] Attempt {auto_retry} dropped by server. Retrying...")
-                        await asyncio.sleep(2)
-                except Exception as e:
-                    print(f"   [!] Attempt {auto_retry} error: {e}")
-                    await asyncio.sleep(2)
+            # 2. Login Phase (Relies on vitap_vtop_client's internal retries)
+            try:
+                if await vtopClientLogin(client):
+                    login_success = True
+                else:
+                    print("   [x] Server rejected the connection.")
+            except Exception as e:
+                print(f"   [x] Fatal Connection Crash: {e}")
 
-            # --- MANUAL OVERRIDE (If all 3 auto-retries fail) ---
             if not login_success:
                 print(f"\n[!] LOGIN FAILED. The VTOP server timed out, or your password is wrong.")
                 action = input("[-] [ENTER] Retry | [0/EXIT] Close | [WIPE] Delete Saved Pass: ").strip().upper()
@@ -605,47 +601,48 @@ async def main():
                     import sys
                     sys.exit() 
                 elif action == 'WIPE':
+                    import os
                     if os.path.exists("credentials.txt"):
                         os.remove("credentials.txt")
                     print("[-] Trashed credentials. Let's try again...\n")
                 
-                # This continue restarts the 'while True' loop, creating a BRAND NEW async with block
-                continue 
+                continue # Reboots the Master Loop for a fresh socket
 
-            # ==========================================
-            # --- AFTER SUCCESSFUL LOGIN ---
-            # WE ARE STILL INSIDE THE `async with` BLOCK
-            # ==========================================
+            # 3. Home Page Phase (The Gatekeeper)
             print("   [.] Entering Home Page...")
+            home_success = False
             
-            content_resp = None
             for attempt in range(1, 4):
                 try:
+                    import httpx
                     content_resp = await client._client.get(
                         "https://vtop.vitap.ac.in/vtop/content?", 
                         timeout=15.0,
                         follow_redirects=True
                     )
-                        
                     if content_resp.status_code == 200:
+                        home_success = True
                         break
-                        
-                except (httpx.ConnectError, httpx.RemoteProtocolError):
-                    if attempt < 3:
-                        print(f"   [!] Connection reset. Retrying landing page ({attempt}/3)...")
-                        await asyncio.sleep(1.5)
-                        continue
-                    else:
-                        raise 
+                except Exception as e:
+                    print(f"   [!] Connection timeout. Retrying landing page ({attempt}/3)...")
+                    await asyncio.sleep(2)
+            
+            # If the socket is dead, do NOT proceed to fetchSemesters. Restart entirely.
+            if not home_success:
+                print("   [x] The VTOP server dropped the connection. Rebuilding socket...")
+                continue 
 
-            # Fetch Initial Data
+            # 4. Data Scraping Phase
             try:
                 available_sems = await fetchSemesters(client)
                 profile_data = await fetchProfile(client)
+                
+                if not available_sems:
+                    print("   [x] Server returned empty semester data. Rebuilding...")
+                    continue
             except Exception as e:
-                print(f"   [x] Login succeeded, but failed to fetch initial data: {e}")
-                input("\n   Press Enter to return to login...")
-                continue
+                print(f"   [x] Connection broke while scraping data: {e}")
+                continue 
             
             student_name = profile_data.get("basic", {}).get("name", "Student")
             target_sem = available_sems[0]['id'] if available_sems else None
@@ -657,22 +654,21 @@ async def main():
             print(f" CURRENT SEM : {current_sem_name}")
             print(f"{'='*65}\n")
             
-            
+            # 5. The Menu Loop
             while True:
                 print_header("MAIN MENU")
-                #print(f"   Logged in as: {client.username or 'Unknown'}")
                 print("   " + "─" * 40)
                 
                 print("   [ ACADEMICS ]")
                 print("   1.  Today's Schedule")
                 print("   2.  Full Timetable")
                 print("   3.  Attendance Record")
-                print("   4.  Internal Marks")
-                print("   5.  Grade History (Transcript)")
-                print("   6.  Credits Distribution")
-                print("   7.  Course Page (Lecture Plan & Materials)")
+                print("   4.  Course Page ")
+                print("   5.  Internal Marks")
+                print("   6.  Exam Schedule")
+                print("   7.  Grade History (Transcript)")
                 print("   8.  Digital Assignments")
-                print("   9.  Exam Schedule")
+                print("   9.  Credits Distribution")
                 
                 print("\n   [ HOSTEL ]")
                 print("   10. General Outing")
@@ -688,14 +684,12 @@ async def main():
                 print("\n   0.  Exit")
                 print("   " + "─" * 40)
                 
-                # --- SINGLE INPUT PROMPT ---
-                print("", end="\n", flush=True) # Forces the terminal buffer to stabilize
+                print("", end="\n", flush=True)
                 choice = input(f"[{reg_no}] Enter choice (0-16): ").strip()
                 
-                # --- MENU LOGIC ---
                 if choice == '0':
                     print("Logging out... Goodbye!")
-                    return # Cleanly shuts down the async function
+                    return 
                 
                 elif choice == '1': # Today's Schedule
                     if not target_sem:
@@ -734,7 +728,7 @@ async def main():
                         else:
                             print("[!] Invalid option")
 
-                elif choice == '4': # Internal Marks
+                elif choice == '5': # Internal Marks
                     if not target_sem:
                         print("[!] No semester selected. Use option 14.")
                         continue
@@ -742,17 +736,17 @@ async def main():
                     data = await fetchMarks(client, target_sem)
                     print_marks(data)
 
-                elif choice == '5': # Grade History
+                elif choice == '7': # Grade History (Transcript)
                     print_header("ACADEMIC TRANSCRIPT")
                     g_data = await fetchGradeHistory(client)
                     print_grade_history(g_data)
 
-                elif choice == '6': # Credits
+                elif choice == '9': # Credits Distribution
                     print_header("ACADEMIC CREDITS DISTRIBUTION")
                     c_data = await fetchCredits(client)
                     print_credits(c_data)
 
-                elif choice == '7': # Course Page
+                elif choice == '4': # Course Page (Lecture Plan & Materials)
                     if not target_sem:
                         print("[!] No semester selected. Use option 14.")
                         continue
@@ -790,6 +784,7 @@ async def main():
                                 
                                 if len(classes) == 1:
                                     selected_class = classes[0]
+                                    import re
                                     fac_clean = re.sub(r'^\d+\s*-\s*', '', selected_class['faculty'])
                                     print(f"   [+] Auto-selected: SLOT: {selected_class['slot']} | FAC: {fac_clean}")
                                 else:
@@ -798,6 +793,7 @@ async def main():
                                     print("   " + "-" * 60)
                                     
                                     current_slot = ""
+                                    import re
                                     for i, cls in enumerate(classes):
                                         if cls['slot'] != current_slot:
                                             if current_slot != "": print("")
@@ -843,7 +839,8 @@ async def main():
                                 
                                 print_course_page_table(c_page)
                                 
-                                # --- DOWNLOAD LOOP ---
+                                import os
+                                import glob
                                 home = os.path.expanduser("~")
                                 save_dir = os.path.join(home, "Downloads")
 
@@ -867,9 +864,9 @@ async def main():
 
                                 while True:
                                     print("\n   ACTIONS:")
-                                    print("   [1, 2..] Enter S.No(s) to download (e.g., 18, 21, 23)")
+                                    print("   [1, 2..] Enter S.No(s) to download")
                                     print("   [G1, G2] Enter G1, G2.. to download General Material")
-                                    print("   [A]      Download ALL materials (Skips existing files)")
+                                    print("   [A]      Download ALL materials")
                                     print("   [0]      Back to Subject List") 
                                     
                                     dl_choice = input("\n   Choice: ").strip().upper()
@@ -932,7 +929,7 @@ async def main():
                                                 fname = format_general_name(selected_code, item['title'], g_idx+1)
                                                 
                                                 if check_exists(fname):
-                                                    print(f"   [-] File already exists in Downloads: {fname}")
+                                                    print(f"   [-] File already exists: {fname}")
                                                 else:
                                                     print(f"   [.] Downloading {fname[:60]}...")
                                                     res, filepath = await download_course_material(client, item['download_path'], save_dir, fname)
@@ -941,7 +938,7 @@ async def main():
                                             else:
                                                 print("   [!] Invalid G number.")
                                         except ValueError: 
-                                            print("   [!] Invalid input format. Use G1, G2, etc.")
+                                            print("   [!] Invalid input format.")
 
                                     elif all(part.strip().isdigit() for part in dl_choice.split(',')):
                                         choices = [x.strip() for x in dl_choice.split(',')]
@@ -959,9 +956,9 @@ async def main():
                                                     downloads_started = True
                                                     fname = f"{short_date}_{selected_code}_{safe_topic}"
                                                     if check_exists(fname): 
-                                                        print(f"   [-] Main file already exists: {fname[:60]}...")
+                                                        print(f"   [-] Main file exists: {fname[:60]}...")
                                                     else:
-                                                        print(f"   [.] Downloading Main: {fname[:60]}...")
+                                                        print(f"   [.] Downloading: {fname[:60]}...")
                                                         res, filepath = await download_course_material(client, target_lec['download_path'], save_dir, fname)
                                                         if res: print(f"   [✓] Saved: {filepath}")
                                                 
@@ -969,7 +966,7 @@ async def main():
                                                     downloads_started = True
                                                     fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
                                                     if check_exists(fname): 
-                                                        print(f"   [-] Reference file already exists: {fname[:60]}...")
+                                                        print(f"   [-] Reference exists: {fname[:60]}...")
                                                     else:
                                                         print(f"   [.] Downloading Reference {r_idx+1}...")
                                                         res, filepath = await download_course_material(client, r_path, save_dir, fname)
@@ -980,20 +977,20 @@ async def main():
                                                     print(f"\n   [🔗] Web Links for Lecture {target_sno}:")
                                                     for link in target_lec['web_links']:
                                                         print(f"        -> {link}")
-                                                        
+                                                
                                                 if not downloads_started:
                                                     print(f"   [!] No materials available for Lecture {target_sno}.")
                                             else:
                                                 print(f"   [!] Lecture S.No {target_sno} not found.")
-                                                
                                     else:
-                                        print("   [!] Invalid command. Type a number, comma separated numbers, G#, or A.")
+                                        print("   [!] Invalid command.")
                         except ValueError:
                             print("   [!] Please enter a valid number.")
 
                 elif choice == '8': # Digital Assignments
                     if not target_sem:
-                        print("[!] No semester selected. Use option 14.")
+                        print("   [!] No semester selected. Use option 14.")
+                        input("\n   Press Enter to return...")
                         continue
                         
                     print(f"   [.] Fetching Digital Assignment Courses...")
@@ -1001,15 +998,22 @@ async def main():
                     
                     if not da_courses:
                         print("   [!] No digital assignments found for this semester.")
+                        input("\n   Press Enter to return...")
                         continue
                         
                     while True:
+                        import os
+                        os.system('cls' if os.name == 'nt' else 'clear')
                         print_header("DIGITAL ASSIGNMENTS")
-                        print(f"   {'#':<3} {'CODE':<10} {'COURSE TITLE':<45} {'FACULTY'}")
-                        print("   " + "─" * 90)
+                        print(f"   {'#':<3} {'CODE':<10} {'COURSE TITLE':<40} {'FACULTY'}")
+                        print("   " + "─" * 95)
+                        
                         for i, c in enumerate(da_courses):
-                            print(f"   {i+1:<3} {c['code']:<10} {c['title'][:43]:<45} {c['faculty'][:25]}")
-                        print("   " + "─" * 90)
+                            title = (c['title'][:37] + '..') if len(c['title']) > 37 else c['title']
+                            fac = (c['faculty'][:25])
+                            print(f"   {i+1:<3} {c['code']:<10} {title:<40} {fac}")
+                        
+                        print("   " + "─" * 95)
                         print("   0. Back to Main Menu")
                         
                         c_sel = input("\n   Select course number: ").strip()
@@ -1019,7 +1023,8 @@ async def main():
                             idx = int(c_sel) - 1
                             if 0 <= idx < len(da_courses):
                                 selected_course = da_courses[idx]
-                                print(f"\n   [.] Fetching assignments for {selected_course['code']}...")
+                                print(f"\n   [.] Fetching records for {selected_course['code']}...")
+                                
                                 assignments = await fetchDADetails(client, selected_course['class_id'])
                                 
                                 if not assignments:
@@ -1029,63 +1034,62 @@ async def main():
                                     
                                 while True:
                                     print(f"\n   ASSIGNMENTS: {selected_course['code']} - {selected_course['title']}")
-                                    print(f"   {'#':<3} {'TITLE':<25} {'DUE DATE':<15} {'FILES'}")
-                                    print("   " + "─" * 65)
+                                    print(f"   {'#':<3} {'TITLE':<25} {'DUE DATE':<15} {'STATUS':<20} {'FILES'}")
+                                    print("   " + "─" * 85)
                                     
                                     for asn in assignments:
+                                        raw = asn['submission_status']
+                                        if not raw: ui_status = "⏳ Pending"
+                                        elif raw == 'File Not Uploaded': ui_status = "❌ Missed"
+                                        else: ui_status = "✅ Submitted"
+
                                         files = []
-                                        if asn['qp_link']: files.append("📄 QP")
-                                        if asn['sub_link']: files.append("✅ SUB")
+                                        if asn['can_qp_download']: files.append("📄 QP")
+                                        if asn['can_da_download']: files.append("📤 MY-DA")
                                         f_str = ", ".join(files) if files else "None"
-                                        print(f"   {asn['s_no']:<3} {asn['title']:<25} {asn['due_date']:<15} {f_str}")
-                                    print("   " + "─" * 65)
-                                    print("   [#]  Enter # to Download Files")
-                                    print("   [A]  Download ALL Files for this course")
-                                    print("   [0]  Go Back")
+                                        
+                                        print(f"   {asn['serial_number']:<3} {asn['assignment_title'][:23]:<25} {asn['due_date']:<15} {ui_status:<20} {f_str}")
+                                    
+                                    print("   " + "─" * 85)
+                                    print("   [#] Enter # to Download | [A] Download ALL | [0] Go Back")
                                     
                                     a_sel = input("\n   Choice: ").strip().upper()
                                     if a_sel == '0': break
                                     
-                                    save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+                                    save_dir = os.path.join(os.path.expanduser("~"), "Downloads", "VTOP_Assignments", selected_course['code'])
+                                    if not os.path.exists(save_dir): os.makedirs(save_dir)
                                     
+                                    to_download = []
                                     if a_sel == 'A':
-                                        print(f"   [.] Downloading all available files to {save_dir}...")
-                                        for asn in assignments:
-                                            if asn['qp_link']:
-                                                fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_QP"
-                                                await download_course_material(client, asn['qp_link'], save_dir, fname)
-                                            if asn['sub_link']:
-                                                fname = f"{selected_course['code']}_{asn['title'].replace(' ', '')}_MySubmission"
-                                                await download_course_material(client, asn['sub_link'], save_dir, fname)
-                                        print("   [✓] Bulk download complete.")
-                                        
+                                        to_download = assignments
                                     elif a_sel.isdigit():
                                         a_idx = int(a_sel) - 1
                                         if 0 <= a_idx < len(assignments):
-                                            target_asn = assignments[a_idx]
-                                            
-                                            if target_asn['qp_link']:
-                                                fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_QP"
-                                                print(f"   [.] Downloading Question Paper...")
-                                                res, path = await download_course_material(client, target_asn['qp_link'], save_dir, fname)
-                                                if res: print(f"   [✓] Saved: {path}")
-                                                
-                                            if target_asn['sub_link']:
-                                                fname = f"{selected_course['code']}_{target_asn['title'].replace(' ', '')}_MySubmission"
-                                                print(f"   [.] Downloading Your Submission...")
-                                                res, path = await download_course_material(client, target_asn['sub_link'], save_dir, fname)
-                                                if res: print(f"   [✓] Saved: {path}")
-                                                
-                                            if not target_asn['qp_link'] and not target_asn['sub_link']:
-                                                print("   [!] No files available to download for this assignment.")
-                                        else:
-                                            print("   [!] Invalid number.")
+                                            to_download = [assignments[a_idx]]
+                                    
+                                    if not to_download:
+                                        print("   [!] Invalid selection.")
+                                        continue
+
+                                    for target_asn in to_download:
+                                        if target_asn['can_qp_download']:
+                                            fname = f"{target_asn['assignment_title'].replace(' ', '_')}_QP"
+                                            print(f"   [.] Downloading QP: {target_asn['assignment_title']}...")
+                                            await download_course_material(client, target_asn['qp_id'], save_dir, fname)
+                                        
+                                        if target_asn['can_da_download']:
+                                            fname = f"{target_asn['assignment_title'].replace(' ', '_')}_Submission"
+                                            print(f"   [.] Downloading Your Submission...")
+                                            await download_course_material(client, target_asn['da_id'], save_dir, fname)
+                                    
+                                    print(f"   [✓] Done. Files saved to: {save_dir}")
+                                    input("\n   Press Enter to continue...")
                             else:
                                 print("   [!] Invalid selection.")
                         except ValueError:
                             print("   [!] Please enter a valid number.")
 
-                elif choice == '9': # Exam Schedule
+                elif choice == '6': # Exam Schedule
                     if not target_sem:
                         print("[!] No semester selected. Use option 14.")
                         continue
@@ -1118,12 +1122,10 @@ async def main():
                     
                     if sub == '2':
                         printGeneralOuting(history)
-
                         if history:
                             print("\n   [P] Download Gate Pass (PDF)")
                             print("   [D] Delete a Request")
                             print("   [Enter] Go Back")
-                            
                             act = input("   Choice: ").strip().upper()
                             
                             if act == 'P':
@@ -1133,24 +1135,19 @@ async def main():
                                         item = history[idx]
                                         if item['download_url']:
                                             print("   [.] Downloading...")
-                                            
+                                            import os
                                             home = os.path.expanduser("~")
                                             download_folder = os.path.join(home, "Downloads")
                                             clean_date = item['out_date'].replace(" ", "-")
                                             filename = f"general_outing_{clean_date}.pdf"
                                             full_path = os.path.join(download_folder, filename)
                                             res, msg = await download_g_outpass(client, item['download_url'], full_path)
-                                            
-                                            if res: 
-                                                print(f"   ✅ Saved to: {full_path}")
-                                            else:   
-                                                print(f"   ❌ {msg}")
+                                            if res: print(f"   ✅ Saved to: {full_path}")
+                                            else:   print(f"   ❌ {msg}")
                                         else:
                                             print("   [!] No pass available (Must be Approved).")
-                                    else:
-                                        print("   [!] Invalid Index.")
-                                except ValueError:
-                                    print("   [!] Please enter a number.")
+                                    else: print("   [!] Invalid Index.")
+                                except ValueError: print("   [!] Please enter a number.")
                             
                             elif act == 'D':
                                 try:
@@ -1164,35 +1161,21 @@ async def main():
                                                         res, msg = await deleteGeneralOuting(client, item['booking_id'])
                                                         if res: print(f"   ✅ {msg}")
                                                         else:   print(f"   ❌ {msg}")
-                                        else:
-                                            print("   [!] Cannot delete. (Only 'Waiting' requests can be deleted)")
-                                    else:
-                                        print("   [!] Invalid Index.")
-                                except ValueError:
-                                    print("   [!] Please enter a number.")
+                                        else: print("   [!] Cannot delete. (Only 'Waiting' requests can be deleted)")
+                                    else: print("   [!] Invalid Index.")
+                                except ValueError: print("   [!] Please enter a number.")
 
                     elif sub == '1':
                         print("\n   --- NEW OUTING APPLICATION ---")
                         print("   ⚠️  NOTE: You must apply at least 24 HOURS in advance.")
-                        print("   [Enter '0' to Cancel and Go Back]")
-                        
                         try:
                             place = input("\n   Place of Visit : ").strip()
-                            if place == '0':
-                                print("   [x] Cancelled.")
-                                continue
-
+                            if place == '0': continue
                             purpose = input("   Purpose        : ").strip()
-                            if purpose == '0':
-                                print("   [x] Cancelled.")
-                                continue
-
-                            print("   (Format: DD-MMM-YYYY, e.g., 11-Feb-2026)")
-                            out_d = input("   Out Date        : ").strip()
+                            if purpose == '0': continue
+                            out_d = input("   Out Date (DD-MMM-YYYY): ").strip()
                             if out_d == '0': continue
-
                             out_t = input("   Out Time (HH:MM): ").strip()
-                            
                             in_d  = input("   In Date         : ").strip()
                             in_t  = input("   In Time (HH:MM): ").strip()
                             
@@ -1200,22 +1183,14 @@ async def main():
                             if confirm == 'y':
                                 print("\n   [.] Submitting...")
                                 success, msg = await submitGeneralOuting(client, info, place, purpose, out_d, out_t, in_d, in_t)
-                                
-                                if success:
-                                    print(f"   ✅ SUCCESS: {msg}")
-                                else:
-                                    print(f"   ❌ FAILED: {msg}")
-                            else:
-                                print("   [x] Cancelled.")
-
-                        except Exception as e:
-                            print(f"   [!] Error: {e}")
+                                if success: print(f"   ✅ SUCCESS: {msg}")
+                                else: print(f"   ❌ FAILED: {msg}")
+                        except Exception as e: print(f"   [!] Error: {e}")
 
                 elif choice == '11': # Weekend Outing
                     print_header("WEEKEND OUTING SYSTEM")
                     print("   [.] Fetching details...")
                     data = await fetchWeekendOuting(client)
-                    
                     if not data:
                         print("   [!] Could not fetch data. (Check internet or re-login)")
                         continue
@@ -1227,17 +1202,14 @@ async def main():
                     print(f"\n   STUDENT: {info.get('name')}")
                     print(f"   BLOCK  : {info.get('hostelBlock')} | ROOM: {info.get('roomNo')}")
                     
-                    if not can_apply:
-                        print("   STATUS : 🔴 Applications Closed (Tue-Fri Only)")
-                    else:
-                        print("   STATUS : 🟢 Applications Open")
+                    if not can_apply: print("   STATUS : 🔴 Applications Closed (Tue-Fri Only)")
+                    else: print("   STATUS : 🟢 Applications Open")
                         
                     print("   " + "-" * 60)
-                    
                     while True:
                         print("\n   MENU:")
                         print("   1. Apply for Weekend Outing")
-                        print("   2. View History / Delete / Download Outpass")
+                        print("   2. View History / Actions")
                         print("   0. Back")
                         
                         sub = input("\n   Select Option: ").strip()
@@ -1246,82 +1218,54 @@ async def main():
                         if sub == '1':
                             if not can_apply:
                                 print("\n   ⚠️  ACCESS DENIED: Time Restriction")
-                                print("   [!] You can only apply from Tuesday 12:00 AM to Friday 11:59 PM.")
                                 input("   Press Enter to return...")
                                 continue
-                            
-                            print("\n   --- NEW WEEKEND OUTING ---")
-                            print("   [Enter '0' to Cancel at any time]")
                             
                             try:
                                 places = ["Vijayawada", "Guntur", "Tenali", "Eluru", "Others"]
                                 print("\n   Select Place of Visit:")
-                                for i, p in enumerate(places):
-                                    print(f"   {i+1}. {p}")
+                                for i, p in enumerate(places): print(f"   {i+1}. {p}")
                                 p_idx = input("   Choice: ").strip()
                                 if p_idx == '0': continue
                                 place = places[int(p_idx) - 1]
                                 
                                 purpose = input("\n   Purpose (Max 20 chars): ").strip()
                                 if purpose == '0': continue
-                                
-                                print("\n   (Format: DD-MMM-YYYY, e.g., 22-Feb-2026)")
-                                print("   *Note: Must be within the next 6 days.")
-                                out_d = input("   Date: ").strip()
+                                out_d = input("   Date (DD-MMM-YYYY): ").strip()
                                 if out_d == '0': continue
                                 
-                                times = [
-                                    "9:30 AM- 3:30PM", 
-                                    "10:30 AM- 4:30PM", 
-                                    "11:30 AM- 5:30PM", 
-                                    "12:30 PM- 6:30PM"
-                                ]
+                                times = ["9:30 AM- 3:30PM", "10:30 AM- 4:30PM", "11:30 AM- 5:30PM", "12:30 PM- 6:30PM"]
                                 print("\n   Select Outing Time:")
-                                for i, t in enumerate(times):
-                                    print(f"   {i+1}. {t}")
+                                for i, t in enumerate(times): print(f"   {i+1}. {t}")
                                 t_idx = input("   Choice: ").strip()
                                 if t_idx == '0': continue
                                 out_t = times[int(t_idx) - 1]
                                 
+                                import re
                                 while True:
-                                    contact = input("\n   Contact No (10 digits, starts with 7-9): ").strip()
+                                    contact = input("\n   Contact No (10 digits): ").strip()
                                     if contact == '0': break
-                                    if re.match(r"^[7-9]\d{9}$", contact):
-                                        break
-                                    else:
-                                        print("   [!] Invalid format. Try again.")
+                                    if re.match(r"^[7-9]\d{9}$", contact): break
+                                    else: print("   [!] Invalid format.")
                                 if contact == '0': continue
                                 
-                                confirm = input(f"\n   Submit request for {place} on {out_d}? (y/n): ").lower()
+                                confirm = input(f"\n   Submit request for {place}? (y/n): ").lower()
                                 if confirm == 'y':
                                     print("\n   [.] Submitting payload...")
                                     success, msg = await submitWeekendOuting(client, info, place, purpose, out_d, out_t, contact)
-                                    if success: 
-                                        print(f"   ✅ SUCCESS: {msg}")
-                                        data = await fetchWeekendOuting(client)
-                                        history = data.get('history', [])
-                                    else: 
-                                        print(f"   ❌ FAILED: {msg}")
-                                else: 
-                                    print("   [x] Cancelled.")
-                                    
-                            except (ValueError, IndexError): 
-                                print("   [!] Invalid selection. Please enter the correct number.")
-                            except Exception as e: 
-                                print(f"   [!] Error: {e}")
+                                    if success: print(f"   ✅ SUCCESS: {msg}")
+                                    else: print(f"   ❌ FAILED: {msg}")
+                            except Exception as e: print(f"   [!] Error: {e}")
 
                         elif sub == '2':
                             printWeekendOuting(history)
-                            
                             if history:
                                 print("\n   [#] Type Row Number to Download Outpass")
                                 print("   [D] Delete a Pending Request")
                                 print("   [0] Go Back")
                                 act = input("\n   Choice: ").strip().upper()
                                 
-                                if act == '0' or act == '':
-                                    continue
-                                    
+                                if act == '0' or act == '': continue
                                 elif act.upper() == 'D':
                                     try:
                                         idx = int(input("   Enter Row # to delete: ")) - 1
@@ -1329,60 +1273,35 @@ async def main():
                                             item = history[idx]
                                             if "Wait" in item['status'] or "Pending" in item['status']:
                                                 if item.get('booking_id'):
-                                                    confirm = input(f"   Delete request for {item.get('place', 'this location')}? (y/n): ")
-                                                    if confirm.lower() == 'y':
-                                                        res, msg = await deleteWeekendOuting(client, item['booking_id'])
-                                                        if res: 
-                                                            print(f"   ✅ {msg}")
-                                                            data = await fetchWeekendOuting(client)
-                                                            history = data.get('history', [])
-                                                        else:   
-                                                            print(f"   ❌ {msg}")
-                                                else:
-                                                    print("   [!] Error: No booking ID found for this request.")
-                                            else:
-                                                print("   [!] Cannot delete active/processed requests.")
-                                        else:
-                                            print("   [!] Invalid Row Number.")
-                                    except ValueError:
-                                        print("   [!] Please enter a valid number.")
+                                                    res, msg = await deleteWeekendOuting(client, item['booking_id'])
+                                                    if res: print(f"   ✅ {msg}")
+                                                    else:   print(f"   ❌ {msg}")
+                                            else: print("   [!] Cannot delete active requests.")
+                                    except ValueError: print("   [!] Please enter a valid number.")
                                         
                                 elif act.isdigit():
                                     idx = int(act) - 1
                                     if 0 <= idx < len(history):
                                         selected_outing = history[idx]
                                         if selected_outing['download_link']:
+                                            import os
                                             save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
                                             fname = f"Outpass_{selected_outing['out_date']}_{selected_outing['place']}"
-                                            
                                             print(f"   [.] Securing Outpass from VTOP servers...")
-                                            res, path = await download_w_outpass(
-                                                client, 
-                                                selected_outing['download_link'], 
-                                                save_dir, 
-                                                fname
-                                            )
+                                            res, path = await download_w_outpass(client, selected_outing['download_link'], save_dir, fname)
                                             if res: print(f"   [✓] Saved to: {path}")
                                             else: print(f"   [x] Failed to download Outpass.")
-                                        else:
-                                            print("   [!] Outpass is not available for this request yet.")
-                                    else:
-                                        print("   [!] Invalid Row Number.")
+                                        else: print("   [!] Outpass is not available yet.")
 
                 elif choice == '12': # 75% Calculator
                     print_header("75% ATTENDANCE CALCULATOR")
-                    print("   Calculate how many classes you can bunk or need to attend.")
-                    print("   " + "─" * 60)
                     try:
+                        import math
                         target = 75.0
                         present = int(input("   Classes Attended (Present): ").strip())
                         total = int(input("   Total Classes Conducted:    ").strip())
                         
-                        if total == 0:
-                            print("   [!] Total classes cannot be zero.")
-                            input("\n   Press Enter to continue...")
-                            continue
-
+                        if total == 0: continue
                         current_pct = (present / total) * 100
                         print("   " + "─" * 60)
                         print(f"   Current Attendance: {current_pct:.2f}%")
@@ -1390,42 +1309,26 @@ async def main():
                         if current_pct >= target:
                             bunkable = math.floor((100 * present - target * total) / target)
                             if bunkable > 0:
-                                print(f"   ✅ You are SAFE!")
-                                print(f"   🎉 You can bunk {int(bunkable)} next classes and stay above {target}%.")
-                                new_total = total + bunkable
-                                new_pct = (present / new_total) * 100
-                                print(f"      (Attendance will drop to {new_pct:.2f}%)")
+                                print(f"   ✅ You are SAFE! You can bunk {int(bunkable)} next classes.")
                             else:
                                 print(f"   ⚠️  You are on the edge! You cannot miss any more classes.")
-                                
                         else:
                             needed = math.ceil((target * total - 100 * present) / (100 - target))
-                            print(f"   ❌ You are in the DANGER ZONE!")
-                            print(f"   🚑 You must attend {int(needed)} next classes continuously.")
-                            new_present = present + needed
-                            new_total = total + needed
-                            new_pct = (new_present / new_total) * 100
-                            print(f"      (Attendance will recover to {new_pct:.2f}%)")
-                            
-                    except ValueError:
-                        print("   [!] Invalid input. Please enter numbers only.")
-                    except ZeroDivisionError:
-                        print("   [!] Target cannot be 100% (leads to division by zero).")
-                    
+                            print(f"   ❌ You are in the DANGER ZONE! Attend {int(needed)} next classes continuously.")
+                    except ValueError: print("   [!] Invalid input.")
                     input("\n   Press Enter to return...")
 
-                elif choice == '13': # Profile
+                elif choice == '13': # Student Profile
                     print_header("STUDENT PROFILE")
                     print_profile(profile_data)
 
-                elif choice == '14': # Change Sem
+                elif choice == '14': # Change Semester
                     if not available_sems:
                         print("   ...No semester data available. Re-scraping...")
                         available_sems = await fetchSemesters(client)
                     if available_sems:
                         print_header("SELECT SEMESTER")
-                        for i, s in enumerate(available_sems):
-                            print(f"   {i+1}. {s['name']}")
+                        for i, s in enumerate(available_sems): print(f"   {i+1}. {s['name']}")
                         sel = input("\nSelect a semester number (0 to cancel): ").strip()
                         if sel == '0': continue
                         try:
@@ -1434,79 +1337,65 @@ async def main():
                                 target_sem = available_sems[idx]['id']
                                 current_sem_name = available_sems[idx]['name']
                                 print(f"[+] Active Semester set to: {current_sem_name}")
-                            else:
-                                print("[!] Invalid selection.")
-                        except ValueError:
-                            print("[!] Please enter a valid number.")
+                        except ValueError: pass
 
                 elif choice == '15': # Update Credentials
                     print("\n   =======================================")
                     print("   🔄 UPDATE SAVED CREDENTIALS")
                     print("   =======================================")
-                    
-                    new_user = input("   👉 Enter Registration Number (e.g., 24BCE7058): ").strip().upper()
+                    new_user = input("   👉 Enter Registration Number: ").strip().upper()
+                    import pwinput
                     new_pass = pwinput.pwinput(prompt="   👉 Enter New VTOP Password: ", mask="*").strip()
                     
-                    if not new_user or not new_pass:
-                        print("   [!] Fields cannot be empty. Update cancelled.")
-                        continue
-                        
-                    print("\n   --- Verify Your Details ---")
-                    print(f"   Registration No: {new_user}")
-                    print(f"   Password:        {'*' * len(new_pass)}")
-                    
-                    confirm = input("\n   Save new credentials and restart? (y/n): ").strip().lower()
-                    
-                    if confirm == 'y':
-                        with open("credentials.txt", "w") as f:
-                            f.write(f"{new_user}\n{new_pass}\n")
-                        
-                        print("   [✓] Credentials updated successfully!")
-                        print("   [🚀] Restarting CLI to apply changes...\n")
-                        os.execv(sys.executable, ['python'] + sys.argv)
-                    else:
-                        print("   [!] Update cancelled. Kept old credentials.")
+                    if new_user and new_pass:
+                        confirm = input("\n   Save new credentials and restart? (y/n): ").strip().lower()
+                        if confirm == 'y':
+                            with open("credentials.txt", "w") as f:
+                                f.write(f"{new_user}\n{new_pass}\n")
+                            import os
+                            import sys
+                            print("   [✓] Credentials updated successfully! Restarting...")
+                            os.execv(sys.executable, ['python'] + sys.argv)
                 
-                elif choice == '16':
+                elif choice == '16': # Bunk Predictor
                     try:
-                        import os
                         import json
-                        import asyncio
-                        import traceback
+                        import os
                         from datetime import datetime as dt_obj, timedelta
                         import services
 
                         print("\n   [ BUNK SIMULATOR ]")
-                        
-                        # --- PRE-FLIGHT CALENDAR DISPLAY ---
                         current_year = dt_obj.now().year
                         if os.path.exists("bunk_cache.json"):
                             try:
                                 with open("bunk_cache.json", "r") as f:
                                     cache_data = json.load(f)
-                                    # Check specifically for the 'blocked_dates' wrapper
                                     if isinstance(cache_data, dict) and "blocked_dates" in cache_data:
                                         b_dates = cache_data["blocked_dates"]
                                         if b_dates:
-                                            print("   [i] Active Exclusions (Holidays & Exams):")
+                                            today_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                                            print("   [i] Upcoming Exclusions (Holidays & Exams):")
+                                            
+                                            printed_any = False
                                             for d_str, purpose in b_dates.items():
                                                 try:
-                                                    day_name = dt_obj.strptime(f"{d_str}-{current_year}", "%d-%m-%Y").strftime("%A")
-                                                    print(f"       {d_str} -- {day_name:<9} -- {purpose}")
+                                                    event_date = dt_obj.strptime(f"{d_str}-{current_year}", "%d-%m-%Y")
+                                                    # Only print if the event is today or in the future
+                                                    if event_date >= today_dt:
+                                                        day_name = event_date.strftime("%A")
+                                                        print(f"       {d_str} -- {day_name:<9} -- {purpose}")
+                                                        printed_any = True
                                                 except Exception:
-                                                    print(f"       {d_str} -- {'Unknown':<9} -- {purpose}")
+                                                    pass # Silently skip malformed dates
+                                                    
+                                            if not printed_any:
+                                                print("       (No upcoming holidays/exams found)")
                                             print("   " + "-"*45)
-                            except Exception:
-                                pass # Silently skip display if JSON is corrupted
+                            except Exception: pass
 
-                        print("   Formats: '05-03, 10-03' OR '05-03 to 15-03'")
                         bunk_input = input("   Enter dates/range to bunk: ").strip()
+                        if not bunk_input: continue
 
-                        if not bunk_input:
-                            print("   [!] No dates entered. Returning to menu.")
-                            continue
-
-                        # --- 1. Parse Dates ---
                         valid_dates = []
                         try:
                             if 'to' in bunk_input.lower():
@@ -1514,126 +1403,56 @@ async def main():
                                 start_dt = dt_obj.strptime(f"{start_str}-{current_year}", "%d-%m-%Y")
                                 end_dt = dt_obj.strptime(f"{end_str}-{current_year}", "%d-%m-%Y")
                                 delta = end_dt - start_dt
-                                
-                                if delta.days < 0:
-                                    print("   [!] End date cannot be before start date.")
-                                    continue
-                                    
-                                for i in range(delta.days + 1):
-                                    valid_dates.append(start_dt + timedelta(days=i))
+                                for i in range(delta.days + 1): valid_dates.append(start_dt + timedelta(days=i))
                             else:
                                 date_strs = [x.strip() for x in bunk_input.split(',')]
-                                for ds in date_strs:
-                                    valid_dates.append(dt_obj.strptime(f"{ds}-{current_year}", "%d-%m-%Y"))
+                                for ds in date_strs: valid_dates.append(dt_obj.strptime(f"{ds}-{current_year}", "%d-%m-%Y"))
                         except Exception as e:
-                            print(f"   [!] Invalid date format. Use DD-MM. (Error: {e})")
+                            print(f"   [!] Invalid date format.")
                             continue
 
-                        print(f"\n   [.] Simulating {len(valid_dates)} days. Fetching VTOP data...")
+                        print(f"\n   [.] Fetching timetable...")
+                        timetable_data = await fetchTimetable(client, target_sem)
+                        print(f"   [.] Fetching attendance...")
+                        attendance_data = await fetchAttendance(client, target_sem)
 
-                        # --- 2. Fetch Timetable ---
-                        timetable_data = None
-                        for attempt in range(1, 4):
-                            try:
-                                timetable_data = await fetchTimetable(client, target_sem)
-                                break 
-                            except Exception as e:
-                                if attempt < 3:
-                                    print(f"   [!] Timetable dropped (Attempt {attempt}/3). Waking up socket...")
-                                    await asyncio.sleep(2)
-                                    try: await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
-                                    except: pass
-                                else:
-                                    print(f"   [!] Timetable fetch error: {e}")
-
-                        if not timetable_data:
-                            print("   [x] Aborting simulation: Network timed out on Timetable.")
+                        if not timetable_data or not attendance_data:
+                            print("   [x] Data fetch failed. Cannot run simulation.")
                             continue
 
-                        # --- 3. Fetch Attendance Summary ---
-                        attendance_data = None
-                        for attempt in range(1, 4):
-                            try:
-                                attendance_data = await fetchAttendance(client, target_sem)
-                                break 
-                            except Exception as e:
-                                if attempt < 3:
-                                    print(f"   [!] Attendance dropped (Attempt {attempt}/3). Waking up socket...")
-                                    await asyncio.sleep(2)
-                                    try: await client._client.get("https://vtop.vitap.ac.in/vtop/content?", timeout=5.0)
-                                    except: pass
-                                else:
-                                    print(f"   [!] Attendance fetch error: {e}")
-
-                        if not attendance_data:
-                            print("   [x] Aborting simulation: Network timed out on Attendance.")
-                            continue
-
-                        # --- 4. Sync Exact Timelines (Detailed Fetch) ---
-                        print(f"   [.] Syncing exact timelines for {len(attendance_data)} subjects... (Takes a few seconds)")
-                        
+                        print(f"   [.] Syncing exact timelines for subjects...")
                         for sub in attendance_data:
                             c_id = sub.get('course_id')
                             type_id = sub.get('type_id') or sub.get('type_code')
                             sub['exact_last_date'] = None 
-                            
                             if c_id and type_id:
-                                for attempt in range(2): 
-                                    try:
-                                        history = await fetchAttendanceDetail(client, target_sem, c_id, type_id)
-                                        if history:
-                                            def p_date(x):
-                                                try: return dt_obj.strptime(x['date'], "%d-%b-%Y")
-                                                except:
-                                                    try: return dt_obj.strptime(x['date'], "%d-%m-%Y")
-                                                    except: return dt_obj.min
-                                                    
-                                            history.sort(key=p_date)
-                                            sub['exact_last_date'] = history[-1].get('date') 
-                                        break 
-                                    except Exception as e:
-                                        print(f"   [!] API Error on {sub.get('course_code')}: {e}")
-                                        await asyncio.sleep(0.5)
+                                try:
+                                    history = await fetchAttendanceDetail(client, target_sem, c_id, type_id)
+                                    if history:
+                                        def p_date(x):
+                                            try: return dt_obj.strptime(x['date'], "%d-%b-%Y")
+                                            except: return dt_obj.min
+                                        history.sort(key=p_date)
+                                        sub['exact_last_date'] = history[-1].get('date') 
+                                except Exception: pass
 
-                        # --- 5. Run the Simulation ---
-                        print("   [.] Crunching the numbers...")
-                        
                         academic_calendar_blocks = {}
                         if os.path.exists("bunk_cache.json"):
                             try:
                                 with open("bunk_cache.json", "r") as f:
                                     cache_data = json.load(f)
-                                    # Properly parse the wrapped format to pass directly into services.py
                                     if isinstance(cache_data, dict) and "blocked_dates" in cache_data:
-                                        cache_data = cache_data["blocked_dates"]
-                                        
-                                    if isinstance(cache_data, list):
-                                        for date_str in cache_data:
-                                            academic_calendar_blocks[date_str] = "Cached/Excluded Date"
-                                    elif isinstance(cache_data, dict):
-                                        for date_str, reason in cache_data.items():
+                                        for date_str, reason in cache_data["blocked_dates"].items():
                                             academic_calendar_blocks[date_str] = str(reason)
-                            except Exception as e:
-                                print(f"   [!] Warning: Could not read bunk_cache.json: {e}")
+                            except Exception: pass
 
-                        report = services.simulate_multi_day_bunk(
-                            valid_dates, 
-                            timetable_data, 
-                            attendance_data, 
-                            academic_calendar_blocks
-                        )
+                        report = services.simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, academic_calendar_blocks)
                         print(report)
-                        
                         input("\n   Press Enter to return to menu...")
-
-                    except BaseException as fatal_error:
-                        import traceback
-                        print(f"\n   [!!!] ABSOLUTE FATAL ERROR IN BLOCK 16: {fatal_error}")
-                        traceback.print_exc()
-                        input("\n   [DEBUG] Read the error above and press Enter to return to menu...")
+                    except Exception as e: print(f"   [!] Simulation error: {e}")
 
 if __name__ == "__main__":
-    check_for_updates()
+    #check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
