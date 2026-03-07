@@ -53,7 +53,7 @@ from services import *
 
 console = Console()
 # --- CONFIGURATION ---
-CURRENT_VERSION = "4.1"
+CURRENT_VERSION = "4.11"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
@@ -1363,6 +1363,7 @@ async def main():
                         import os
                         from datetime import datetime as dt_obj, timedelta
                         import services
+                        import asyncio
 
                         print("\n   [ BUNK SIMULATOR ]")
                         current_year = dt_obj.now().year
@@ -1393,7 +1394,7 @@ async def main():
                                             print("   " + "-"*45)
                             except Exception: pass
 
-                        bunk_input = input("   Enter dates/range to bunk: ").strip()
+                        bunk_input = input("   Enter dates/range to bunk (ex: 24-2, 5-3 or 3-3 to 6-3): ").strip()
                         if not bunk_input: continue
 
                         valid_dates = []
@@ -1420,7 +1421,7 @@ async def main():
                             print("   [x] Data fetch failed. Cannot run simulation.")
                             continue
 
-                        print(f"   [.] Syncing exact timelines for subjects...")
+                        print(f"   [.] Syncing exact timelines for subjects... (Takes a few seconds)")
                         for sub in attendance_data:
                             c_id = sub.get('course_id')
                             type_id = sub.get('type_id') or sub.get('type_code')
@@ -1431,9 +1432,15 @@ async def main():
                                     if history:
                                         def p_date(x):
                                             try: return dt_obj.strptime(x['date'], "%d-%b-%Y")
-                                            except: return dt_obj.min
+                                            except:
+                                                try: return dt_obj.strptime(x['date'], "%d-%m-%Y")
+                                                except: return dt_obj.min
+                                        
                                         history.sort(key=p_date)
                                         sub['exact_last_date'] = history[-1].get('date') 
+                                        
+                                    # Crucial anti-spam delay so VTOP doesn't block your connection
+                                    await asyncio.sleep(0.4)
                                 except Exception: pass
 
                         academic_calendar_blocks = {}
@@ -1449,8 +1456,8 @@ async def main():
                         report = services.simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, academic_calendar_blocks)
                         print(report)
                         input("\n   Press Enter to return to menu...")
-                    except Exception as e: print(f"   [!] Simulation error: {e}")
-
+                    except Exception as e: 
+                        print(f"   [!] Simulation error: {e}")
 if __name__ == "__main__":
     check_for_updates()
     try:
