@@ -1394,7 +1394,7 @@ async def fetchDACourseList(client, sem_id):
         return []
 
 async def fetchDADetails(client, class_id):
-    """Fetches assignments, deadlines, and download links for a specific course."""
+    """Fetches assignments, deadlines, statuses, and download IDs for a specific course."""
     from bs4 import BeautifulSoup
     import time, re
     
@@ -1417,33 +1417,99 @@ async def fetchDADetails(client, class_id):
         if len(tables) > 1:
             for row in tables[1].find_all('tr'):
                 cols = row.find_all('td')
+                # Check if row is a valid assignment row (starts with a digit)
                 if len(cols) >= 9 and cols[0].get_text(strip=True).isdigit():
                     
-                    qp_link, sub_link = None, None
+                    qp_id, da_id = None, None
                     
-                    # Column 5: Question Paper Link
+                    # Column 5: Question Paper Download Link
                     qp_a = cols[5].find('a')
-                    if qp_a:
+                    if qp_a and 'href' in qp_a.attrs:
                         match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", qp_a['href'])
-                        if match: qp_link = match.group(1)
+                        if match: qp_id = match.group(1)
                             
-                    # Column 8: Student Submission Link
+                    # Column 6: Submission Status (Used for State logic)
+                    submission_status = cols[6].get_text(strip=True)
+                        
+                    # Column 8: Student Uploaded DA Download Link
                     sub_a = cols[8].find('a')
-                    if sub_a:
+                    if sub_a and 'href' in sub_a.attrs:
                         match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", sub_a['href'])
-                        if match: sub_link = match.group(1)
+                        if match: da_id = match.group(1)
 
                     assignments.append({
-                        "s_no": cols[0].get_text(strip=True),
-                        "title": cols[1].get_text(strip=True),
+                        "serial_number": cols[0].get_text(strip=True),
+                        "assignment_title": cols[1].get_text(strip=True),
+                        "max_mark": cols[2].get_text(strip=True),
+                        "weightage": cols[3].get_text(strip=True),
                         "due_date": cols[4].get_text(strip=True),
-                        "qp_link": qp_link,
-                        "sub_link": sub_link
+                        "can_qp_download": bool(qp_id),
+                        "qp_id": qp_id or "",
+                        "submission_status": submission_status,
+                        "can_da_download": bool(da_id),
+                        "da_id": da_id or ""
                     })
         return assignments
     except Exception as e:
         print(f"   [!] Error fetching DA details: {e}")
         return []
+
+def generate_da_report(da_data):
+    if not da_data:
+        return "   [!] No Digital Assignment data available."
+
+    result_msg = "\n   " + "="*65 + "\n"
+    result_msg += "   📚 DIGITAL ASSIGNMENTS DASHBOARD\n"
+    result_msg += "   " + "="*65 + "\n\n"
+
+    for course in da_data:
+        assignments = course.get('assignments', [])
+        
+        # Calculate summary counts (Mirroring Dart SubmissionCounts)
+        pending = missed = submitted = 0
+        for a in assignments:
+            status = a['submission_status']
+            if not status: 
+                pending += 1
+            elif status == 'File Not Uploaded': 
+                missed += 1
+            else: 
+                submitted += 1
+            
+        # Course Header with tally
+        result_msg += f"   📘 {course['code']} - {course['title']} ({course['type']})\n"
+        result_msg += f"   ├ Faculty : {course['faculty']}\n"
+        result_msg += f"   ├ Status  : [{pending} Pending | {missed} Missed | {submitted} Submitted]\n"
+        
+        if not assignments:
+            result_msg += "   └ No assignments posted yet.\n\n"
+            continue
+            
+        result_msg += "   ├ Assignments:\n"
+        for i, assign in enumerate(assignments):
+            is_last = (i == len(assignments) - 1)
+            prefix = "   │  └" if is_last else "   │  ├"
+            inner = "   │     " if is_last else "   │  │  "
+            
+            # Map raw string to clean UI status
+            raw = assign['submission_status']
+            if not raw:
+                ui_status = "⏳ Pending (Still Open)"
+            elif raw == 'File Not Uploaded':
+                ui_status = "❌ Missed (Deadline Passed)"
+            else:
+                ui_status = f"✅ Submitted on {raw}"
+
+            qp_info = "Available" if assign['can_qp_download'] else "Not Posted"
+
+            result_msg += f"{prefix} {assign['serial_number']}. {assign['assignment_title']} (Due: {assign['due_date']})\n"
+            result_msg += f"{inner}├ Marks  : {assign['weightage']} / {assign['max_mark']} weightage\n"
+            result_msg += f"{inner}├ QP     : {qp_info}\n"
+            result_msg += f"{inner}└ Status : {ui_status}\n"
+        
+        result_msg += "\n"
+        
+    return result_msg
 
 def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocked_dates):
     from datetime import datetime as dt_obj, timedelta
