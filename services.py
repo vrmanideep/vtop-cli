@@ -1511,8 +1511,22 @@ def generate_da_report(da_data):
         
     return result_msg
 
+
 def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocked_dates):
     from datetime import datetime as dt_obj, timedelta
+
+    if not valid_dates:
+        return "   [!] No valid dates provided."
+
+    max_bunk_date = max(valid_dates)
+    
+    # ==========================================
+    # --- 0. SEMESTER BOUNDARY CHECK ---
+    # Prevent projecting into the summer break (past May 19th)
+    # ==========================================
+    sem_end_dt = dt_obj(max_bunk_date.year, 5, 19)
+    if max_bunk_date > sem_end_dt:
+        return "\n   [!] HALT: The semester officially ends on 19-05.\n   [!] You cannot simulate attendance beyond this date.\n"
 
     # 1. Clean holidays
     clean_blocked = {}
@@ -1524,7 +1538,6 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
         except:
             clean_blocked[k] = v
 
-    max_bunk_date = max(valid_dates)
     bunk_set = {dt.strftime("%d-%m") for dt in valid_dates}
     
     sim_att = {}
@@ -1641,3 +1654,5 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
         result_msg += f"   Total attendance periods skipped: {classes_missed}"
 
     return result_msg
+
+    

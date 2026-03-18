@@ -53,7 +53,7 @@ from services import *
 
 console = Console()
 # --- CONFIGURATION ---
-CURRENT_VERSION = "4.11"
+CURRENT_VERSION = "4.12"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
@@ -203,7 +203,7 @@ async def print_attendance_with_details(client, semester_id, summary_data):
         try: is_low = float(perc) < 75
         except: is_low = False
         status_icon = "🔴" if is_low else "🟢"
-        print(f"\n   {status_icon} {code} : {name} ({ctype})")
+        print(f"\n   {status_icon} {code} : {name}")
         print(f"        Attendance: {perc}% ({attended}/{total})")
         c_id = sub.get('course_id')
         type_id = sub.get('type_id') 
@@ -606,7 +606,7 @@ async def main():
                         os.remove("credentials.txt")
                     print("[-] Trashed credentials. Let's try again...\n")
                 
-                continue # Reboots the Master Loop for a fresh socket
+                continue
 
             # 3. Home Page Phase (The Gatekeeper)
             print("   [.] Entering Home Page...")
@@ -617,7 +617,7 @@ async def main():
                     import httpx
                     content_resp = await client._client.get(
                         "https://vtop.vitap.ac.in/vtop/content?", 
-                        timeout=15.0,
+                        timeout=25.0,
                         follow_redirects=True
                     )
                     if content_resp.status_code == 200:
@@ -1375,7 +1375,7 @@ async def main():
                                         b_dates = cache_data["blocked_dates"]
                                         if b_dates:
                                             today_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                                            print("   [i] Upcoming Exclusions (Holidays & Exams):")
+                                            print("   [i] Upcoming Non-Instructional, Exam Days and Holidays:")
                                             
                                             printed_any = False
                                             for d_str, purpose in b_dates.items():
@@ -1410,6 +1410,13 @@ async def main():
                                 for ds in date_strs: valid_dates.append(dt_obj.strptime(f"{ds}-{current_year}", "%d-%m-%Y"))
                         except Exception as e:
                             print(f"   [!] Invalid date format.")
+                            continue
+
+                        # --- SEMESTER BOUNDARY CHECK ---
+                        sem_end_dt = dt_obj(current_year, 5, 19) # May 19th
+                        if max(valid_dates) > sem_end_dt:
+                            print(f"\n   [!] Halt: The semester officially ends on 19-05.")
+                            print("   [!] You cannot simulate attendance beyond this date.")
                             continue
 
                         print(f"\n   [.] Fetching timetable...")
@@ -1458,8 +1465,9 @@ async def main():
                         input("\n   Press Enter to return to menu...")
                     except Exception as e: 
                         print(f"   [!] Simulation error: {e}")
+
 if __name__ == "__main__":
-    check_for_updates()
+    #check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
