@@ -58,16 +58,9 @@ CURRENT_VERSION = "4.13"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 '''
-import urllib.request
-import json
-import os
-import sys
-import time
-import zipfile
-import io
 
 # --- Configuration ---
-CURRENT_VERSION = "4.1.3"
+CURRENT_VERSION = "4.1.4"
 
 def check_for_updates():
     API_URL = "https://api.github.com/repos/vrmanideep/vtop/releases/latest"
@@ -82,8 +75,6 @@ def check_for_updates():
             
         remote_version = data['tag_name'].replace('v', '') 
         changelog = data['body']
-        
-        # GitHub provides a direct link to a zip of the entire release's source code!
         zipball_url = data['zipball_url'] 
         
         # 2. Compare versions
@@ -110,17 +101,16 @@ def check_for_updates():
                     # Open the downloaded zip file directly from memory
                     with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
                         for file_info in z.infolist():
-                            # Skip directories, we only care about files
+                            # Skip directories
                             if file_info.is_dir():
                                 continue
                             
-                            # GitHub zipballs wrap everything in a root folder (e.g., 'vrmanideep-vtop-1a2b3c/')
-                            # We split the string to remove that first folder and get the real file path
+                            # Strip the root wrapper folder GitHub adds to zipballs
                             parts = file_info.filename.split('/', 1)
                             if len(parts) > 1 and parts[1]:
                                 target_path = parts[1]
                                 
-                                # If you added new folders in your repo, create them locally first
+                                # Recreate necessary folder structures locally
                                 folder_name = os.path.dirname(target_path)
                                 if folder_name:
                                     os.makedirs(folder_name, exist_ok=True)
@@ -140,7 +130,7 @@ def check_for_updates():
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                     
                 except Exception as e:
-                    print(f"\n   ❌ Failed to download files: {e}")
+                    print(f"\n   ❌ Failed to extract files: {e}")
                     
         else:
             # Clear the "Checking..." message if already up to date
