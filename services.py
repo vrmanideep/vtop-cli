@@ -1511,7 +1511,6 @@ def generate_da_report(da_data):
         
     return result_msg
 
-
 def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocked_dates):
     from datetime import datetime as dt_obj, timedelta
 

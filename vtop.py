@@ -53,7 +53,7 @@ from services import *
 
 console = Console()
 # --- CONFIGURATION ---
-CURRENT_VERSION = "4.12"
+CURRENT_VERSION = "4.13"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
@@ -203,7 +203,7 @@ async def print_attendance_with_details(client, semester_id, summary_data):
         try: is_low = float(perc) < 75
         except: is_low = False
         status_icon = "🔴" if is_low else "🟢"
-        print(f"\n   {status_icon} {code} : {name}")
+        print(f"\n   {status_icon} {name}")
         print(f"        Attendance: {perc}% ({attended}/{total})")
         c_id = sub.get('course_id')
         type_id = sub.get('type_id') 
@@ -222,13 +222,17 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                     history.sort(key=parse_date)
                     last_date = history[-1].get('date', 'N/A')
                     print(f"        📅 Attendance Last Updated on: {last_date}")
-                    absents = [h for h in history if "Present" not in h['status']]
-                    if absents:
-                        print(f"        [!] Found {len(absents)} Absences:")
+                    
+                    # Filter out 'Present' so we keep both Absences and OnDuty records
+                    exceptions = [h for h in history if "Present" not in h['status']]
+                    
+                    if exceptions:
+                        print(f"        [!] Found {len(exceptions)} Absences/OnDuty:")
                         print(f"            {'DATE':<12} {'DAY':<5} {'SLOT':<8} {'STATUS'}") 
                         print("            " + "-" * 40)
-                        absents.sort(key=parse_date, reverse=True)
-                        for h in absents:
+                        exceptions.sort(key=parse_date, reverse=True)
+                        
+                        for h in exceptions:
                             date_str = h.get('date', '-')
                             day_name = "-"
                             try:
@@ -236,9 +240,13 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                                 if d_obj != dt.min:
                                     day_name = d_obj.strftime("%a")
                             except: pass
-                            print(f"            {date_str:<12} {day_name:<5} {h['slot']:<8} ❌ {h['status']}")
+                            
+                            # Dynamic icon: Yellow for OnDuty, Red X for Absences
+                            icon = "" if "On Duty" in h['status'] else "❌"
+                            
+                            print(f"            {date_str:<12} {day_name:<5} {h['slot']:<8} {icon} {h['status']}")
                     else:
-                          print(f"        (History fetched: {len(history)} classes, All Present)")
+                          print(f"        (History fetched: {len(history)/total} classes, All Present)")
                 else:
                     print("        (No history records found)")
             except Exception as e:
