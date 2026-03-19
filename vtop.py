@@ -57,53 +57,44 @@ CURRENT_VERSION = "4.13"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 
-def check_for_updates():
-    import urllib.request
-    # 1. Subtle check message
-    print("\n")
+import urllib.request
+import json
+
+def check_for_updates_via_api():
+    # Format: https://api.github.com/repos/{owner}/{repo}/releases/latest
+    API_URL = "https://api.github.com/repos/YourUsername/YourRepo/releases/latest"
+    CURRENT_VERSION = "4.1.3"
+
     print("   [.] Checking for updates...", end="\r") 
+    
     try:
-        # Add a strict 2-second timeout to the request
-        with urllib.request.urlopen(REPO_URL, timeout=2) as response:
-            remote_code = response.read().decode('utf-8')
+        # Create a request object with a User-Agent (GitHub requires this for API calls)
+        req = urllib.request.Request(API_URL, headers={'User-Agent': 'My-Updater-Script'})
         
-        match = re.search(r'CURRENT_VERSION = "(.*?)"', remote_code)
-        if match:
-            remote_version = match.group(1)
-            if remote_version != CURRENT_VERSION:
-                print(" " * 50, end="\r")
-                print(f"   🚨 UPDATE AVAILABLE: v{CURRENT_VERSION} -> v{remote_version}")
-                choice = input("   Download now? (y/n): ").lower().strip()
-                if choice == 'y':
-                    print("   [⬇️] Downloading update...", end="\r")
-                    with open(__file__, 'w', encoding='utf-8') as f:
-                        f.write(remote_code)
-                    # Add timeout here too!
-                    with urllib.request.urlopen(SERVICES_URL, timeout=2) as response:
-                        services_code = response.read().decode('utf-8')
-                    with open("services.py", 'w', encoding='utf-8') as f:
-                        f.write(services_code)
-                    # The \n breaks it out of the \r trap
-                    print("\n   ✅ Update complete! Restarting...             \n")
-                    
-                    time.sleep(1.5) 
-                    
-                    # 1. Force the terminal to render the text right now
-                    sys.stdout.flush()
-                    
-                    # 2. Clear the screen
-                    os.system('cls' if os.name == 'nt' else 'clear')
-                    
-                    # 3. Double-tap flush to ensure the clear command executes BEFORE the restart
-                    sys.stdout.flush()
-                    
-                    # 4. Boot fresh
-                    os.execv(sys.executable, [sys.executable] + sys.argv)
-            else:
-                print(" " * 50, end="\r")
-    except Exception:
-        # Silently fail if network is slow or down
+        with urllib.request.urlopen(req, timeout=3) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            
+        remote_version = data['tag_name'].replace('v', '') # e.g., strips 'v' from 'v1.0.1'
+        changelog = data['body'] # This is the "changelog thing"
+        
+        if remote_version != CURRENT_VERSION:
+            print(" " * 50, end="\r")
+            print(f"   🚨 UPDATE AVAILABLE: v{CURRENT_VERSION} -> v{remote_version}")
+            
+            # Show the user the changelog!
+            print("\n--- Release Notes ---")
+            print(changelog)
+            print("---------------------\n")
+            
+            choice = input("   Download now? (y/n): ").lower().strip()
+            if choice == 'y':
+                # Grab the zipball or specific assets attached to the release here
+                print("   [⬇️] Downloading update...")
+                # ... download and extraction logic ...
+                
+    except Exception as e:
         print(" " * 50, end="\r")
+        # print(f"Update check failed: {e}") # Uncomment to debug
 
 async def download_material(client, url_suffix, filename):
     return await download_gate_pass(client, url_suffix, filename)
