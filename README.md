@@ -43,19 +43,19 @@ python vtop.py
 ```
 
 ### Menu Options:
-1. **Profile:** View personal and proctor details.
-2. **Transcript:** View complete grade history and CGPA.
+1. **Today's Schedule:** What classes do you have right now?
+2. **Timetable:** Full weekly schedule.
 3. **Attendance:** Detailed subject-wise attendance tracking.
-4. **Timetable:** Full weekly schedule.
-5. **Today's Schedule:** What classes do you have right now?
-6. **Internal Marks:** View marks for CAT, FAT, and assignments.
-7. **Exam Schedule:** Upcoming exam dates and seat locations.
-8. **Change Semester:** Switch context to view previous semester data.
+4. **Course Page:** View and download lecture notes.
+5. **Internal Marks:** View marks for CAT, FAT, and assignments.
+6. **Exam Schedule:** Upcoming exam dates and seat locations.
+7. **Transcript:** View complete grade history and CGPA.
+8. **Digital Assignments:** View/download question paper and solutions. Cannot upload solution to V-TOP.
 9. **Academic Credits:** View credit distribution (Earned vs Required).
-10. **Course Page:** View and download lecture notes.
-11. **General Outing:** Apply for General Outing and View/download outpass.
-12. **Weekend Outing:** Apply for Weekend Outing and View/download outpass.
-13. **Digital Assignments:** View/download question paper and solutions. Cannot upload solution to V-TOP.
+10. **General Outing:** Apply for General Outing and View/download outpass.
+11. **Weekend Outing:** Apply for Weekend Outing and View/download outpass.
+12. **Profile:** View personal and proctor details.
+13. **Change Semester:** Switch context to view previous semester data.
 
 ### ⚠️ Disclaimer
 This is an unofficial client for the VIT-AP VTOP portal. It is developed for educational purposes and personal use.
