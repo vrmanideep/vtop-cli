@@ -12,14 +12,13 @@ credentials.txt
 __pycache__/
 *.py[cod]
 *$py.class
-testing_venv
 
 # --- Virtual Environments ---
 venv/
 .venv/
 env/
 .env/
-
+testing_env
 # --- Distribution / Builds ---
 build/
 dist/

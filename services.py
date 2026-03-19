@@ -1454,18 +1454,21 @@ async def fetchDADetails(client, class_id):
         print(f"   [!] Error fetching DA details: {e}")
         return []
 
-def generate_da_report(da_data):
-    if not da_data:
-        return "   [!] No Digital Assignment data available."
+# TrueColor (24-bit) RGB match for PowerShell's command yellow
+PEACH = '\033[38;2;245;231;158m'
 
-    result_msg = "\n   " + "="*65 + "\n"
-    result_msg += "   📚 DIGITAL ASSIGNMENTS DASHBOARD\n"
-    result_msg += "   " + "="*65 + "\n\n"
+def generate_da_report(da_data):
+    from colorama import Fore, Style
+    if not da_data:
+        return f"   {Fore.RED}[!] No Digital Assignment data available."
+
+    result_msg = f"\n   {Fore.CYAN}" + "="*65 + "\n"
+    result_msg += f"   {PEACH}{Style.BRIGHT}DIGITAL ASSIGNMENTS DASHBOARD\n"
+    result_msg += f"   {Fore.CYAN}" + "="*65 + "\n\n"
 
     for course in da_data:
         assignments = course.get('assignments', [])
         
-        # Calculate summary counts (Mirroring Dart SubmissionCounts)
         pending = missed = submitted = 0
         for a in assignments:
             status = a['submission_status']
@@ -1476,36 +1479,34 @@ def generate_da_report(da_data):
             else: 
                 submitted += 1
             
-        # Course Header with tally
-        result_msg += f"   📘 {course['code']} - {course['title']} ({course['type']})\n"
-        result_msg += f"   ├ Faculty : {course['faculty']}\n"
-        result_msg += f"   ├ Status  : [{pending} Pending | {missed} Missed | {submitted} Submitted]\n"
+        result_msg += f"   {Fore.BLUE}[COURSE] {course['code']} - {course['title']} ({course['type']})\n"
+        result_msg += f"   {Fore.WHITE}├ Faculty : {course['faculty']}\n"
+        result_msg += f"   {Fore.WHITE}├ Status  : [{PEACH}{pending} Pending{Fore.WHITE} | {Fore.RED}{missed} Missed{Fore.WHITE} | {Fore.GREEN}{submitted} Submitted{Fore.WHITE}]\n"
         
         if not assignments:
-            result_msg += "   └ No assignments posted yet.\n\n"
+            result_msg += f"   {Fore.WHITE}└ No assignments posted yet.\n\n"
             continue
             
-        result_msg += "   ├ Assignments:\n"
+        result_msg += f"   {Fore.WHITE}├ Assignments:\n"
         for i, assign in enumerate(assignments):
             is_last = (i == len(assignments) - 1)
             prefix = "   │  └" if is_last else "   │  ├"
             inner = "   │     " if is_last else "   │  │  "
             
-            # Map raw string to clean UI status
             raw = assign['submission_status']
             if not raw:
-                ui_status = "⏳ Pending (Still Open)"
+                ui_status = f"{PEACH}Pending (Still Open){Fore.WHITE}"
             elif raw == 'File Not Uploaded':
-                ui_status = "❌ Missed (Deadline Passed)"
+                ui_status = f"{Fore.RED}Missed (Deadline Passed){Fore.WHITE}"
             else:
-                ui_status = f"✅ Submitted on {raw}"
+                ui_status = f"{Fore.GREEN}Submitted on {raw}{Fore.WHITE}"
 
-            qp_info = "Available" if assign['can_qp_download'] else "Not Posted"
+            qp_info = f"{Fore.GREEN}Available{Fore.WHITE}" if assign['can_qp_download'] else f"{Fore.RED}Not Posted{Fore.WHITE}"
 
-            result_msg += f"{prefix} {assign['serial_number']}. {assign['assignment_title']} (Due: {assign['due_date']})\n"
-            result_msg += f"{inner}├ Marks  : {assign['weightage']} / {assign['max_mark']} weightage\n"
-            result_msg += f"{inner}├ QP     : {qp_info}\n"
-            result_msg += f"{inner}└ Status : {ui_status}\n"
+            result_msg += f"{Fore.WHITE}{prefix} {assign['serial_number']}. {assign['assignment_title']} (Due: {assign['due_date']})\n"
+            result_msg += f"{Fore.WHITE}{inner}├ Marks  : {assign['weightage']} / {assign['max_mark']} weightage\n"
+            result_msg += f"{Fore.WHITE}{inner}├ QP     : {qp_info}\n"
+            result_msg += f"{Fore.WHITE}{inner}└ Status : {ui_status}\n"
         
         result_msg += "\n"
         
@@ -1513,19 +1514,17 @@ def generate_da_report(da_data):
 
 def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocked_dates):
     from datetime import datetime as dt_obj, timedelta
+    from colorama import Fore, Style
 
     if not valid_dates:
-        return "   [!] No valid dates provided."
+        return f"   {Fore.RED}[!] No valid dates provided."
 
     max_bunk_date = max(valid_dates)
     
-    # ==========================================
     # --- 0. SEMESTER BOUNDARY CHECK ---
-    # Prevent projecting into the summer break (past May 19th)
-    # ==========================================
     sem_end_dt = dt_obj(max_bunk_date.year, 5, 19)
     if max_bunk_date > sem_end_dt:
-        return "\n   [!] HALT: The semester officially ends on 19-05.\n   [!] You cannot simulate attendance beyond this date.\n"
+        return f"\n   {Fore.RED}[!] HALT: The semester officially ends on 19-05.\n   [!] You cannot simulate attendance beyond this date.\n"
 
     # 1. Clean holidays
     clean_blocked = {}
@@ -1537,20 +1536,17 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
         except:
             clean_blocked[k] = v
 
-    bunk_set = {dt.strftime("%d-%m") for dt in valid_dates}
+    bunk_set = {dt_obj.strftime(dt, "%d-%m") for dt in valid_dates}
     
     sim_att = {}
     original_data = {}
     classes_missed = 0
 
-    # ==========================================
     # 2. THE FULL TIMELINE PROJECTOR
-    # ==========================================
     for att in attendance_data:
         key = att['course_code'] + att['type_code']
         exact_date = att.get('exact_last_date')
         
-        # Safely parse the exact last date, fallback to today if missing
         if exact_date:
             try:
                 last_upd_dt = dt_obj.strptime(exact_date, "%d-%b-%Y").replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1568,7 +1564,7 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
             "attended": int(att['attended']),
             "total": int(att['total']),
             "current_pct": float(att['percentage']),
-            "last_updated": last_upd_dt, # Store it for the final print
+            "last_updated": last_upd_dt, 
             "gap_classes": 0,
             "gap_breakdown": [],      
             "missed_breakdown": []    
@@ -1576,19 +1572,16 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
         sim_att[key] = val.copy()
         original_data[key] = val.copy()
 
-        # Start checking timetable from the day AFTER the last recorded class
         curr_dt = last_upd_dt + timedelta(days=1)
         
         while curr_dt <= max_bunk_date:
             day_name = curr_dt.strftime("%A")
             date_str_full = curr_dt.strftime("%d-%m")
             
-            # Skip holidays and exams
             if date_str_full in clean_blocked:
                 curr_dt += timedelta(days=1)
                 continue
             
-            # Check timetable for this subject
             day_classes = timetable_data.get(day_name, [])
             course_happens_today = False
             penalty = 1
@@ -1601,12 +1594,10 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
             
             if course_happens_today:
                 if date_str_full in bunk_set:
-                    # BUNK DAY
                     sim_att[key]['total'] += penalty
                     classes_missed += penalty
                     sim_att[key]['missed_breakdown'].append(f"{date_str_full} ({day_name[:3]}) : +{penalty} missed")
                 else:
-                    # GAP DAY
                     sim_att[key]['total'] += penalty
                     sim_att[key]['attended'] += penalty
                     sim_att[key]['gap_classes'] += penalty
@@ -1614,12 +1605,10 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
             
             curr_dt += timedelta(days=1)
 
-    # ==========================================
     # 3. GENERATE SUBJECT-WISE REPORT
-    # ==========================================
-    result_msg = "\n   " + "="*55 + "\n"
-    result_msg += "   📉 SUBJECT-WISE BUNK CALCULATION\n"
-    result_msg += "   " + "="*55 + "\n\n"
+    result_msg = f"\n   {Fore.CYAN}" + "="*55 + "\n"
+    result_msg += f"   {PEACH}{Style.BRIGHT}SUBJECT-WISE BUNK CALCULATION\n"
+    result_msg += f"   {Fore.CYAN}" + "="*55 + f"\n\n{Fore.WHITE}"
     
     impact_found = False
     for key in sim_att:
@@ -1629,29 +1618,27 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
         if new['total'] > curr['total']:
             impact_found = True
             new_pct = (new['attended'] / new['total']) * 100
-            alert = " ⚠️ DANGER" if new_pct < 75 else ""
+            alert = f" {Fore.RED}[DANGER]{Fore.WHITE}" if new_pct < 75 else ""
             
             upd_str = curr['last_updated'].strftime('%d-%m')
-            result_msg += f"   📘 {new['code']} ({new['type']})\n"
+            result_msg += f"   {Fore.BLUE}[COURSE] {new['code']} ({new['type']})\n{Fore.WHITE}"
             result_msg += f"   ├ Current : {curr['current_pct']:.0f}% ({curr['attended']}/{curr['total']}) [Upd: {upd_str}]\n"
             
             if new['gap_classes'] > 0:
-                result_msg += f"   ├ In-Between : +{new['gap_classes']} classes (Assuming 100% attendance)\n"
+                result_msg += f"   ├ In-Between : {Fore.GREEN}+{new['gap_classes']} classes{Fore.WHITE} (Assuming 100% attendance)\n"
                 for g_log in new['gap_breakdown']:
                     result_msg += f"   │  ├ {g_log}\n"
             
             if new['missed_breakdown']:
                 result_msg += f"   ├ Bunking :\n"
                 for m_log in new['missed_breakdown']:
-                    result_msg += f"   │  ├ {m_log}\n"
+                    result_msg += f"   │  ├ {Fore.RED}{m_log}{Fore.WHITE}\n"
                 
-            result_msg += f"   └ Projected: {new_pct:.0f}% ({new['attended']}/{new['total']}){alert}\n\n"
+            result_msg += f"   └ Projected: {PEACH if new_pct < 75 else Fore.GREEN}{new_pct:.0f}% ({new['attended']}/{new['total']}){alert}\n\n"
 
     if not impact_found:
-        result_msg += "   ✅ No attendance changes detected for this timeframe.\n"
+        result_msg += f"   {Fore.GREEN}[OK] No attendance changes detected for this timeframe.\n"
     else:
-        result_msg += f"   Total attendance periods skipped: {classes_missed}"
+        result_msg += f"   {PEACH}Total attendance periods skipped: {classes_missed}"
 
     return result_msg
-
-    
