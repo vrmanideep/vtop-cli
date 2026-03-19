@@ -5,6 +5,7 @@ lxml
 requests
 # --- Dashboard UI ---
 rich
+colorama
 
 # --- Data Validation ---
 pydantic
