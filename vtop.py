@@ -52,17 +52,17 @@ from vitap_vtop_client.client import VtopClient
 from services import *
 
 console = Console()
+'''
 # --- CONFIGURATION ---
 CURRENT_VERSION = "4.13"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
-
+'''
 import urllib.request
 import json
 
 def check_for_updates_via_api():
-    # Format: https://api.github.com/repos/{owner}/{repo}/releases/latest
-    API_URL = "https://api.github.com/repos/YourUsername/YourRepo/releases/latest"
+    API_URL = "https://api.github.com/repos/vrmanideep/vtop/releases/latest"
     CURRENT_VERSION = "4.1.3"
 
     print("   [.] Checking for updates...", end="\r") 
