@@ -58,10 +58,16 @@ CURRENT_VERSION = "4.13"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 '''
+import urllib.request
+import json
+import os
+import sys
+import time
+import zipfile
+import io
+
 # --- Configuration ---
-CURRENT_VERSION = "4.1.4"
-# CHANGE THIS to the exact name of your main script in the GitHub repo (e.g., "main.py" or "vtop.py")
-MAIN_SCRIPT_NAME_IN_REPO = "your_main_script.py" 
+CURRENT_VERSION = "4.1.3"
 
 def check_for_updates():
     API_URL = "https://api.github.com/repos/vrmanideep/vtop/releases/latest"
@@ -77,6 +83,9 @@ def check_for_updates():
         remote_version = data['tag_name'].replace('v', '') 
         changelog = data['body']
         
+        # GitHub provides a direct link to a zip of the entire release's source code!
+        zipball_url = data['zipball_url'] 
+        
         # 2. Compare versions
         if remote_version != CURRENT_VERSION:
             print(" " * 50, end="\r")
@@ -88,27 +97,38 @@ def check_for_updates():
             
             choice = input("   Download now? (y/n): ").lower().strip()
             
-            # 3. Download and apply the update
+            # 3. Download and apply the update dynamically
             if choice == 'y':
                 print("   [⬇️] Downloading update...", end="\r")
                 
-                # Construct raw URLs tied to the specific release tag
-                main_url = f"https://raw.githubusercontent.com/vrmanideep/vtop/v{remote_version}/{MAIN_SCRIPT_NAME_IN_REPO}"
-                services_url = f"https://raw.githubusercontent.com/vrmanideep/vtop/v{remote_version}/services.py"
-                
                 try:
-                    # Download and overwrite the main file (__file__ refers to the script currently running)
-                    with urllib.request.urlopen(main_url, timeout=5) as response:
-                        new_main_code = response.read().decode('utf-8')
-                    with open(__file__, 'w', encoding='utf-8') as f:
-                        f.write(new_main_code)
+                    # Download the zipball into memory
+                    zip_req = urllib.request.Request(zipball_url, headers={'User-Agent': 'vtop-updater'})
+                    with urllib.request.urlopen(zip_req, timeout=10) as response:
+                        zip_data = response.read()
                         
-                    # Download and overwrite services.py
-                    with urllib.request.urlopen(services_url, timeout=5) as response:
-                        new_services_code = response.read().decode('utf-8')
-                    with open("services.py", 'w', encoding='utf-8') as f:
-                        f.write(new_services_code)
-                        
+                    # Open the downloaded zip file directly from memory
+                    with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
+                        for file_info in z.infolist():
+                            # Skip directories, we only care about files
+                            if file_info.is_dir():
+                                continue
+                            
+                            # GitHub zipballs wrap everything in a root folder (e.g., 'vrmanideep-vtop-1a2b3c/')
+                            # We split the string to remove that first folder and get the real file path
+                            parts = file_info.filename.split('/', 1)
+                            if len(parts) > 1 and parts[1]:
+                                target_path = parts[1]
+                                
+                                # If you added new folders in your repo, create them locally first
+                                folder_name = os.path.dirname(target_path)
+                                if folder_name:
+                                    os.makedirs(folder_name, exist_ok=True)
+                                
+                                # Write the updated file to the local machine
+                                with open(target_path, 'wb') as f_out:
+                                    f_out.write(z.read(file_info.filename))
+                                    
                     # 4. Reboot sequence
                     print("\n   ✅ Update complete! Restarting...            \n")
                     time.sleep(1.5) 
