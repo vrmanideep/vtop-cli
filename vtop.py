@@ -58,43 +58,77 @@ CURRENT_VERSION = "4.13"
 REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
 SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
 '''
-import urllib.request
-import json
+# --- Configuration ---
+CURRENT_VERSION = "4.1.4"
+# CHANGE THIS to the exact name of your main script in the GitHub repo (e.g., "main.py" or "vtop.py")
+MAIN_SCRIPT_NAME_IN_REPO = "your_main_script.py" 
 
-def check_for_updates_via_api():
+def check_for_updates():
     API_URL = "https://api.github.com/repos/vrmanideep/vtop/releases/latest"
-    CURRENT_VERSION = "4.1.3"
-
+    
     print("   [.] Checking for updates...", end="\r") 
     
     try:
-        # Create a request object with a User-Agent (GitHub requires this for API calls)
-        req = urllib.request.Request(API_URL, headers={'User-Agent': 'My-Updater-Script'})
-        
+        # 1. Fetch the latest release info from GitHub API
+        req = urllib.request.Request(API_URL, headers={'User-Agent': 'vtop-updater'})
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode('utf-8'))
             
-        remote_version = data['tag_name'].replace('v', '') # e.g., strips 'v' from 'v1.0.1'
-        changelog = data['body'] # This is the "changelog thing"
+        remote_version = data['tag_name'].replace('v', '') 
+        changelog = data['body']
         
+        # 2. Compare versions
         if remote_version != CURRENT_VERSION:
             print(" " * 50, end="\r")
             print(f"   🚨 UPDATE AVAILABLE: v{CURRENT_VERSION} -> v{remote_version}")
             
-            # Show the user the changelog!
             print("\n--- Release Notes ---")
             print(changelog)
             print("---------------------\n")
             
             choice = input("   Download now? (y/n): ").lower().strip()
+            
+            # 3. Download and apply the update
             if choice == 'y':
-                # Grab the zipball or specific assets attached to the release here
-                print("   [⬇️] Downloading update...")
-                # ... download and extraction logic ...
+                print("   [⬇️] Downloading update...", end="\r")
                 
-    except Exception as e:
+                # Construct raw URLs tied to the specific release tag
+                main_url = f"https://raw.githubusercontent.com/vrmanideep/vtop/v{remote_version}/{MAIN_SCRIPT_NAME_IN_REPO}"
+                services_url = f"https://raw.githubusercontent.com/vrmanideep/vtop/v{remote_version}/services.py"
+                
+                try:
+                    # Download and overwrite the main file (__file__ refers to the script currently running)
+                    with urllib.request.urlopen(main_url, timeout=5) as response:
+                        new_main_code = response.read().decode('utf-8')
+                    with open(__file__, 'w', encoding='utf-8') as f:
+                        f.write(new_main_code)
+                        
+                    # Download and overwrite services.py
+                    with urllib.request.urlopen(services_url, timeout=5) as response:
+                        new_services_code = response.read().decode('utf-8')
+                    with open("services.py", 'w', encoding='utf-8') as f:
+                        f.write(new_services_code)
+                        
+                    # 4. Reboot sequence
+                    print("\n   ✅ Update complete! Restarting...            \n")
+                    time.sleep(1.5) 
+                    
+                    sys.stdout.flush()
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    sys.stdout.flush()
+                    
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                    
+                except Exception as e:
+                    print(f"\n   ❌ Failed to download files: {e}")
+                    
+        else:
+            # Clear the "Checking..." message if already up to date
+            print(" " * 50, end="\r")
+                
+    except Exception:
+        # Silently fail if there is no internet, timeout, or GitHub rate limit hit
         print(" " * 50, end="\r")
-        # print(f"Update check failed: {e}") # Uncomment to debug
 
 async def download_material(client, url_suffix, filename):
     return await download_gate_pass(client, url_suffix, filename)
@@ -1466,7 +1500,7 @@ async def main():
                         print(f"   [!] Simulation error: {e}")
 
 if __name__ == "__main__":
-    #check_for_updates()
+    check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
