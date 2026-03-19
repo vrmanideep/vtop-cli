@@ -52,12 +52,6 @@ from vitap_vtop_client.client import VtopClient
 from services import *
 
 console = Console()
-'''
-# --- CONFIGURATION ---
-CURRENT_VERSION = "4.13"
-REPO_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/vtop.py"
-SERVICES_URL = "https://raw.githubusercontent.com/vrmanideep/vtop/main/services.py"
-'''
 
 # --- Configuration ---
 CURRENT_VERSION = "4.1.4"
