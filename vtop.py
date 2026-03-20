@@ -51,7 +51,7 @@ from vitap_vtop_client.client import VtopClient
 from services import *
 
 # --- Configuration ---
-CURRENT_VERSION = "5.0.0"
+CURRENT_VERSION = "5.0.1"
 
 def check_for_updates():
     # Imports kept inside so the updater is 100% self-contained
