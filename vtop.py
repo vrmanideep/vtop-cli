@@ -293,8 +293,8 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                     
                     exceptions = [h for h in history if "Present" not in h['status']]
                     
-                    if exceptions:
-                        print(f"        {PEACH}[!] Found {len(exceptions)} Absences/OnDuty:")
+                    if exceptions: 
+                        print(f"        {PEACH}[!] Found {len(exceptions)} Absences/On Duty:")
                         print(f"            {Fore.CYAN}{'DATE':<12} {'DAY':<5} {'SLOT':<8} {'STATUS'}") 
                         print(f"            {Fore.CYAN}" + "-" * 40)
                         exceptions.sort(key=parse_date, reverse=True)
@@ -308,7 +308,7 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                                     day_name = d_obj.strftime("%a")
                             except: pass
                             
-                            c_stat = Fore.BLUE if "OnDuty" in h['status'] else Fore.RED
+                            c_stat = Fore.GREEN if "On Duty" in h['status'] else Fore.RED
                             print(f"            {Fore.WHITE}{date_str:<12} {day_name:<5} {h['slot']:<8} {c_stat}{h['status']}")
                     else:
                           print(f"        {Fore.GREEN}(History fetched: {len(history)} classes, All Present)")
