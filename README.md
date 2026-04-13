@@ -47,15 +47,18 @@ python vtop.py
 2. **Timetable:** Full weekly schedule.
 3. **Attendance:** Detailed subject-wise attendance tracking.
 4. **Course Page:** View and download lecture notes.
-5. **Internal Marks:** View marks for CAT, FAT, and assignments.
+5. **Internal Marks:** View marks for CAT, FAT, and internal examinations.
 6. **Exam Schedule:** Upcoming exam dates and seat locations.
-7. **Transcript:** View complete grade history and CGPA.
+7. **Grade History:** View complete grade history and CGPA.
 8. **Digital Assignments:** View/download question paper and solutions. Cannot upload solution to V-TOP.
 9. **Academic Credits:** View credit distribution (Earned vs Required).
 10. **General Outing:** Apply for General Outing and View/download outpass.
 11. **Weekend Outing:** Apply for Weekend Outing and View/download outpass.
-12. **Profile:** View personal and proctor details.
-13. **Change Semester:** Switch context to view previous semester data.
+12. **Attendance Calculator**: Calculates number of classes to bunk upon manual entry of number of total and attended classes.
+13. **Profile:** View personal and proctor details.
+14. **Change Semester:** Switch context to view previous semester data.
+15. **Update Credentials**: Allows you to change your credentials to login when you changed them in V-TOP.
+16. **Bunk Simulator**: Allows you to simulate attendance impact before skipping class by printing the attendnace of each class if you skipped on a particular date of your choice.
 
 ### ⚠️ Disclaimer
 This is an unofficial client for the VIT-AP VTOP portal. It is developed for educational purposes and personal use.

@@ -719,14 +719,14 @@ async def main():
             except Exception as e:
                 print(f"   {Fore.RED}[x] Connection broke while scraping data: {e}")
                 continue 
-            
+            asyncio.sleep(0.5)
             student_name = profile_data.get("basic", {}).get("name", "Student")
             
-            # --- SMART SEMESTER AUTO-SELECTION ---
+            # --- SEMESTER AUTO-SELECTION ---
             target_sem = available_sems[0]['id'] if available_sems else None
             current_sem_name = available_sems[0]['name'] if available_sems else "None"
             """
-            # If a new semester drops for registration, index 0 will be empty.
+            # If a new semester drops for registration, data in semester index 0 will be empty.
             # We do a quick background ping to verify if it has active classes.
             if available_sems and len(available_sems) > 1:
                 print(f"   {Fore.CYAN}[.] Verifying active semester data...", end="\r")
@@ -1428,7 +1428,7 @@ async def main():
                             needed = math.ceil((target * total - 100 * present) / (100 - target))
                             print(f"   {Fore.RED}[x] You are in the DANGER ZONE! Attend {int(needed)} next classes continuously.")
                     except ValueError: print(f"   {Fore.RED}[!] Invalid input.")
-                    input(f"\n   {PEACH}Press Enter to return...")
+                    #input(f"\n   {PEACH}Press Enter to return...")
 
                 elif choice == '13':
                     print_header("STUDENT PROFILE")
