@@ -1642,3 +1642,5 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
         result_msg += f"   {PEACH}Total attendance periods skipped: {classes_missed}"
 
     return result_msg
+
+    
