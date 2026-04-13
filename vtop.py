@@ -51,7 +51,7 @@ from vitap_vtop_client.client import VtopClient
 from services import *
 
 # --- Configuration ---
-CURRENT_VERSION = "5.0.1"
+CURRENT_VERSION = "5.0.2"
 
 def check_for_updates():
     # Imports kept inside so the updater is 100% self-contained
@@ -721,8 +721,29 @@ async def main():
                 continue 
             
             student_name = profile_data.get("basic", {}).get("name", "Student")
+            
+            # --- SMART SEMESTER AUTO-SELECTION ---
             target_sem = available_sems[0]['id'] if available_sems else None
             current_sem_name = available_sems[0]['name'] if available_sems else "None"
+            """
+            # If a new semester drops for registration, index 0 will be empty.
+            # We do a quick background ping to verify if it has active classes.
+            if available_sems and len(available_sems) > 1:
+                print(f"   {Fore.CYAN}[.] Verifying active semester data...", end="\r")
+                tt_check = await fetchTimetable(client, target_sem)
+                
+                if not tt_check:
+                    # Wipe the line and print the switch notice
+                    print(" " * 50, end="\r") 
+                    print(f"   {PEACH}[!] '{current_sem_name}' is empty (Registration phase). Auto-switching to active semester...")
+                    target_sem = available_sems[1]['id']
+                    current_sem_name = available_sems[1]['name']
+                else:
+                    print(" " * 50, end="\r") # Clean up the verifying message silently
+            # -------------------------------------
+
+            #print(f"\n{Fore.CYAN}{'='*65}\n")
+            """
 
             print(f"\n{Fore.CYAN}{'='*65}\n")
             print(f" {Fore.WHITE}NAME:       : {Fore.GREEN}{student_name}")
@@ -818,24 +839,6 @@ async def main():
                                 
                         else:
                             print(f"   {Fore.RED}[!] Invalid option. Please enter 1, 2, or 0.")
-
-                elif choice == '5': 
-                    if not target_sem:
-                        print(f"   {Fore.RED}[!] No semester selected. Use option 14.")
-                        continue
-                    print_header(f"INTERNAL MARKS - {current_sem_name}")
-                    data = await fetchMarks(client, target_sem)
-                    print_marks(data)
-
-                elif choice == '7':
-                    print_header("ACADEMIC TRANSCRIPT")
-                    g_data = await fetchGradeHistory(client)
-                    print_grade_history(g_data)
-
-                elif choice == '9':
-                    print_header("ACADEMIC CREDITS DISTRIBUTION")
-                    c_data = await fetchCredits(client)
-                    print_credits(c_data)
 
                 elif choice == '4':
                     if not target_sem:
@@ -1078,6 +1081,27 @@ async def main():
                         except ValueError:
                             print(f"   {Fore.RED}[!] Please enter a valid number.")
 
+                elif choice == '5': 
+                    if not target_sem:
+                        print(f"   {Fore.RED}[!] No semester selected. Use option 14.")
+                        continue
+                    print_header(f"INTERNAL MARKS - {current_sem_name}")
+                    data = await fetchMarks(client, target_sem)
+                    print_marks(data)
+
+                elif choice == '6':
+                    if not target_sem:
+                        print(f"   {Fore.RED}[!] No semester selected. Use option 14.")
+                        continue
+                    print_header(f"EXAM SCHEDULE - {current_sem_name}")
+                    data = await fetchExamSchedule(client, target_sem)
+                    print_exam_schedule(data)
+
+                elif choice == '7':
+                    print_header("ACADEMIC TRANSCRIPT")
+                    g_data = await fetchGradeHistory(client)
+                    print_grade_history(g_data)
+
                 elif choice == '8': 
                     if not target_sem:
                         print(f"   {Fore.RED}[!] No semester selected. Use option 14.")
@@ -1180,13 +1204,10 @@ async def main():
                         except ValueError:
                             print(f"   {Fore.RED}[!] Please enter a valid number.")
 
-                elif choice == '6':
-                    if not target_sem:
-                        print(f"   {Fore.RED}[!] No semester selected. Use option 14.")
-                        continue
-                    print_header(f"EXAM SCHEDULE - {current_sem_name}")
-                    data = await fetchExamSchedule(client, target_sem)
-                    print_exam_schedule(data)
+                elif choice == '9':
+                    print_header("ACADEMIC CREDITS DISTRIBUTION")
+                    c_data = await fetchCredits(client)
+                    print_credits(c_data)
 
                 elif choice == '10': 
                     print_header("GENERAL OUTING SYSTEM")
