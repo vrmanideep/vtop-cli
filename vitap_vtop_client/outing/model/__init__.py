@@ -1,2 +1,0 @@
-from .general_outing_model import GeneralOutingModel
-from .weekend_outing_model import WeekendOutingModel

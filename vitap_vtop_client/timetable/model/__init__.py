@@ -1,1 +1,0 @@
-from .timetable_model import TimetableModel
