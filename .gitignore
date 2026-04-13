@@ -28,6 +28,7 @@ dist/
 .vscode/
 .idea/
 *.swp
+powershell.bat
 
 # --- OS Generated ---
 .DS_Store
