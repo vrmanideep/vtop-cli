@@ -11,6 +11,84 @@ from typing import List, Dict, Any, Tuple
 from bs4 import BeautifulSoup
 from vitap_vtop_client.client import VtopClient
 
+PEACH = '\033[38;2;245;231;158m'
+
+def parse_date(raw: str):
+    """
+    Accepts messy user input and returns a datetime object.
+    Handles: 3-3-26, 3-3-2026, 3/3/26, 3.3.26, 3 3 26, 3-mar-26, 3-march-26
+    """
+    from datetime import datetime as dt_obj
+    import re
+
+    raw = raw.strip().lower()
+
+    # Normalize separators to a single space
+    raw = re.sub(r'[-/.\s]+', ' ', raw)
+    parts = raw.split()
+
+    if len(parts) != 3:
+        raise ValueError(f"Cannot parse date: '{raw}'. Use format like 3-3-26 or 3-Mar-2026")
+
+    day_str, month_str, year_str = parts
+
+    # --- Resolve Day ---
+    try:
+        day = int(day_str)
+    except ValueError:
+        raise ValueError(f"Invalid day: '{day_str}'")
+
+    # --- Resolve Month ---
+    month_map = {
+        "jan": 1, "january": 1,
+        "feb": 2, "february": 2,
+        "mar": 3, "march": 3,
+        "apr": 4, "april": 4,
+        "may": 5,
+        "jun": 6, "june": 6,
+        "jul": 7, "july": 7,
+        "aug": 8, "august": 8,
+        "sep": 9, "sept": 9, "september": 9,
+        "oct": 10, "october": 10,
+        "nov": 11, "november": 11,
+        "dec": 12, "december": 12
+    }
+
+    if month_str.isdigit():
+        month = int(month_str)
+    elif month_str in month_map:
+        month = month_map[month_str]
+    else:
+        raise ValueError(f"Invalid month: '{month_str}'")
+
+    # --- Resolve Year ---
+    year = int(year_str)
+    if year < 100:
+        year += 2000  # 26 → 2026
+
+    return dt_obj(year, month, day)
+
+def to_vtop_date(raw: str) -> str:
+    """
+    Parses user input and returns VTOP-format date string: 03-Mar-2026
+    Used by General Outing and Weekend Outing form submissions.
+    """
+    return parse_date(raw).strftime("%d-%b-%Y")
+
+def to_display_date(raw: str) -> str:
+    """
+    Parses user input and returns a clean display string: 03-Mar-2026
+    """
+    return parse_date(raw).strftime("%d-%b-%Y")
+
+def to_bunk_date(raw: str) -> str:
+    """
+    Parses user input and returns bunk simulator format: 3-3 (DD-MM)
+    Used internally by simulate_multi_day_bunk.
+    """
+    d = parse_date(raw)
+    return f"{d.day}-{d.month}"
+
 def get_cred(file_path="credentials.txt"):
     """
     Reads username from line 1 and password from line 2.
@@ -64,7 +142,7 @@ get_credentials = get_cred
 # Global Creds
 a, password = get_cred("credentials.txt")
 
-# 🛠️ SSL BYPASS
+#  SSL BYPASS
 _original_init = httpx.AsyncClient.__init__
 def _patched_init(self, *args, **kwargs):
     kwargs['verify'] = False
@@ -78,6 +156,256 @@ async def vtopClientLogin(client: VtopClient) -> bool:
     except Exception as e:
         print(f"Login Failed: {e}")
         return False
+
+async def fetchTimetable(client, semester_id: str) -> dict:
+    import time
+    import asyncio
+    from bs4 import BeautifulSoup
+    from collections import defaultdict
+    from colorama import Fore
+
+    print(f"   [.] Fetching and parsing Timetable Grid...")
+    
+    if not getattr(client, "_logged_in_student", None):
+        print(f"   {Fore.RED}[!] No active session found. Please login again.")
+        return {}
+        
+    token = client._logged_in_student.post_login_csrf_token
+    reg_no = client.username
+    
+    headers = {
+        "X-Requested-With": "XMLHttpRequest", 
+        "Referer": "https://vtop.vitap.ac.in/vtop/content",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+    }
+
+    try:
+        # --- STEP 1: The Primer Request (Navigate to the menu page) ---
+        menu_url = "https://vtop.vitap.ac.in/vtop/academics/common/StudentTimeTable"
+        menu_payload = {
+            "authorizedID": reg_no,
+            "_csrf": token
+        }
+        await client._client.post(menu_url, data=menu_payload, headers=headers)
+        
+        # Add a tiny delay to ensure VTOP's backend finishes processing the state change
+        await asyncio.sleep(0.2)
+
+        # --- STEP 2: The Data Request (Fetch the actual grid) ---
+        data_url = "https://vtop.vitap.ac.in/vtop/processViewTimeTable"
+        data_payload = {
+            "semesterSubId": semester_id,
+            "authorizedID": reg_no,
+            "_csrf": token,
+            "x": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+        }
+        
+        response = await client._client.post(data_url, data=data_payload, headers=headers)
+        
+        if "vtopLoginForm" in response.text or "not authorized" in response.text.lower():
+            print(f"   {Fore.RED}[!] VTOP rejected the request (Session Expired or Invalid Semester).")
+            return {}
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        tables = soup.find_all('table')
+        if len(tables) < 2:
+            print(f"   {Fore.RED}[!] Timetable grid is missing from the page. (Found {len(tables)} tables)")
+            return {}
+
+        classname_code = {}
+        faculty_code = {}
+        course_to_class_nbr = {}
+        course_to_slot_venue = {}
+
+        # --- FIRST PASS: Extract course names, codes, and faculty from Table 1 ---
+        for row in tables[0].find_all('tr'):
+            cells = row.find_all('td')
+            if len(cells) > 8:
+                class_nbr = cells[6].get_text(strip=True)
+                cname = cells[2].get_text(strip=True)
+
+                tep = [k.strip() for k in cname.split(" - ") if k.strip()]
+                if len(tep) > 1:
+                    code = tep[0]
+                    name_parts = " - ".join(tep[1:])
+                    name = name_parts.split("(")[0].strip()
+
+                    if code not in classname_code:
+                        classname_code[code] = name
+
+                    course_type = "UNK"
+                    if "( Embedded Theory )" in cname: course_type = "ETH"
+                    elif "( Embedded Lab )" in cname: course_type = "ELA"
+                    elif "( Theory Only )" in cname: course_type = "TH"
+                    elif "( Project )" in cname: course_type = "PJT"
+
+                    if class_nbr:
+                        course_key = f"{code}_{course_type}"
+                        course_to_class_nbr[course_key] = class_nbr
+
+                        if len(cells) > 7:
+                            paras = cells[7].find_all('p')
+                            if len(paras) >= 2:
+                                slot_text = paras[0].get_text(strip=True).replace("-", "").strip()
+                                venue_text = paras[1].get_text(strip=True)
+                                if slot_text and venue_text:
+                                    course_to_slot_venue[course_key] = (slot_text, venue_text)
+
+                faculty_info = cells[8].get_text(strip=True)
+                if faculty_info and faculty_info != "Project" and class_nbr:
+                    faculty_name = faculty_info.split(" - ")[0].strip()
+                    if faculty_name:
+                        faculty_code[class_nbr] = faculty_name
+
+        # --- SECOND PASS: Extract grid timings and slots from Table 2 ---
+        raw_slots = []
+        timings_temp = []
+        count_for_offset = 0
+        day = ""
+
+        for row in tables[1].find_all('tr'):
+            cells = row.find_all('td')
+            if len(cells) > 6:
+                if count_for_offset % 2 == 0:
+                    day = cells[0].get_text(strip=True)
+                    cells = cells[1:]  # Shift cells left
+
+                for index, val_td in enumerate(cells):
+                    val = val_td.get_text(strip=True)
+                    
+                    # 0 and 1 extract theory timings
+                    if count_for_offset == 0:
+                        timings_temp.append({"serial": index, "course_type": "ETH", "start_time": val, "end_time": ""})
+                    elif count_for_offset == 1:
+                        if index < len(timings_temp):
+                            timings_temp[index]["end_time"] = val
+                    
+                    # 2 and 3 extract lab timings
+                    elif count_for_offset == 2:
+                        timings_temp.append({"serial": index, "course_type": "ELA", "start_time": val, "end_time": ""})
+                    elif count_for_offset == 3:
+                        # Offset by 22 because 0-21 are theory slots in VTOP's array
+                        if (22 + index) < len(timings_temp):
+                            timings_temp[22 + index]["end_time"] = val
+                    
+                    # Extract the actual class blocks
+                    elif count_for_offset > 3:
+                        if len(val) > 5 and index != 0:
+                            parts = [p.strip() for p in val.split("-") if p.strip()]
+                            if len(parts) > 2:
+                                raw_parts = [p.strip() for p in val.split("-")]
+                                slot_name = raw_parts[0] if len(raw_parts) > 0 else ""
+                                course_code = raw_parts[1] if len(raw_parts) > 1 else ""
+                                course_type = raw_parts[2] if len(raw_parts) > 2 else ""
+                                room_no = raw_parts[3] if len(raw_parts) > 3 else ""
+                                block = " ".join(raw_parts[4:]) if len(raw_parts) > 4 else ""
+
+                                # Resolve Name
+                                course_key = f"{course_code}_{course_type}"
+                                found_name = classname_code.get(course_code, "")
+                                
+                                raw_slots.append({
+                                    "serial": index,
+                                    "day": day,
+                                    "slot": slot_name,
+                                    "course_code": course_code,
+                                    "course_type": course_type,
+                                    "room_no": room_no,
+                                    "block": block,
+                                    "start_time": "",
+                                    "end_time": "",
+                                    "name": found_name,
+                                    "class_nbr": course_to_class_nbr.get(course_key, "")
+                                })
+            count_for_offset += 1
+
+        # --- MAP TIMINGS TO SLOTS ---
+        for slot in raw_slots:
+            for t in timings_temp:
+                if t["serial"] == slot["serial"] and (t["course_type"] == slot["course_type"] or slot["course_type"] in t["course_type"]):
+                    slot["start_time"] = t["start_time"]
+                    slot["end_time"] = t["end_time"]
+                    break
+
+        # --- GROUP CONSECUTIVE SLOTS ---
+        grouped_slots = defaultdict(lambda: defaultdict(list))
+        for slot in raw_slots:
+            course_key = f"{slot['course_code']}_{slot['course_type']}"
+            grouped_slots[course_key][slot['day']].append(slot)
+
+        weekly_timetable = defaultdict(list)
+        day_map = {
+            "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday",
+            "THU": "Thursday", "FRI": "Friday", "SAT": "Saturday", "SUN": "Sunday"
+        }
+
+        for course_key, day_slots in grouped_slots.items():
+            for d, slots in day_slots.items():
+                if not slots: continue
+                
+                # Sort by start time
+                slots.sort(key=lambda x: x['start_time'])
+                
+                consecutive_groups = []
+                current_group = []
+
+                for slot in slots:
+                    if not current_group:
+                        current_group.append(slot)
+                    else:
+                        last_slot = current_group[-1]
+                        if (last_slot['end_time'] == slot['start_time'] or last_slot['start_time'] == slot['start_time']) and \
+                           last_slot['course_code'] == slot['course_code'] and \
+                           last_slot['course_type'] == slot['course_type']:
+                            current_group.append(slot)
+                        else:
+                            consecutive_groups.append(current_group)
+                            current_group = [slot]
+                
+                if current_group:
+                    consecutive_groups.append(current_group)
+
+                # Format for the CLI UI
+                full_day_name = day_map.get(d, d)
+                
+                for group in consecutive_groups:
+                    first = group[0]
+                    last = group[-1]
+                    slots_combined = "+".join([s['slot'] for s in group])
+
+                    # Check for better slot/venue info from table 1
+                    target_key = f"{first['course_code']}_{first['course_type']}"
+                    
+                    if target_key in course_to_slot_venue and course_to_slot_venue[target_key][0]:
+                        final_slot = course_to_slot_venue[target_key][0]
+                        final_venue = course_to_slot_venue[target_key][1]
+                    else:
+                        final_slot = slots_combined
+                        final_venue = f"{first['room_no']}-{first['block'].replace(' ', '-')}"
+
+                    faculty_name = faculty_code.get(first['class_nbr'], "Faculty Not Available")
+
+                    weekly_timetable[full_day_name].append({
+                        "time": f"{first['start_time']} - {last['end_time']}",
+                        "start_time": first['start_time'], # Used for sorting later
+                        "venue": final_venue,
+                        "course_code": first['course_code'],
+                        "course_type": first['course_type'],
+                        "slot": final_slot,
+                        "course_name": first['name'],
+                        "faculty": faculty_name
+                    })
+
+        # Sort each day by start time
+        for day in weekly_timetable:
+            weekly_timetable[day].sort(key=lambda x: x['start_time'])
+
+        return dict(weekly_timetable)
+
+    except Exception as e:
+        print(f"   [!] fetchTimetable Error: {e}")
+        return {}
 
 async def get_todays_schedule(client):
     print("\n   [+] Fetching Timetable...")
@@ -215,15 +543,6 @@ async def fetchSemesters(client: VtopClient) -> List[Dict[str, str]]:
         print(f"   [!] Semester scrape error: {e}")
 
     return [{"name": "Fallback Semester", "id": "AP2025262"}]
-
-async def fetchTimetable(client: VtopClient, semesterId: str) -> Dict[str, Any]:
-    try:
-        data = await client.get_timetable(sem_sub_id=semesterId)
-        if hasattr(data, "model_dump"): return data.model_dump()
-        return dict(data) if data else {}
-    except Exception as e:
-        print(f"   [!] Timetable fetch error: {e}")
-        return {}
 
 async def fetchMarks(client, semesterId: str) -> dict:
     print(f"   ...Fetching Internal Marks for {semesterId}...")
@@ -1454,8 +1773,6 @@ async def fetchDADetails(client, class_id):
         print(f"   [!] Error fetching DA details: {e}")
         return []
 
-# TrueColor (24-bit) RGB match for PowerShell's command yellow
-PEACH = '\033[38;2;245;231;158m'
 
 def generate_da_report(da_data):
     from colorama import Fore, Style
@@ -1643,4 +1960,105 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
 
     return result_msg
 
+async def open_vtop_browser(client):
+    import json
+    import tempfile
+    import subprocess
+    import sys
+    import os
+    from colorama import Fore, Style
+
+    # 1. Extract cookies from httpx client
+    cookies = {}
+    try:
+        jar = client._client.cookies
+        for cookie in jar.jar:
+            cookies[cookie.name] = cookie.value
+    except Exception:
+        try:
+            cookies = dict(client._client.cookies)
+        except Exception:
+            pass
+
+    if not cookies:
+        print(f"   {Fore.RED}[x] No session cookies found. Cannot launch browser.")
+        return
+
+    print(f"   {Fore.CYAN}[.] Launching independent Chrome session...")
+
+    # 2. Save cookies to a temporary file so the detached process can read them
+    temp_dir = tempfile.gettempdir()
+    cookie_file = os.path.join(temp_dir, "vtop_cookies.json")
+    with open(cookie_file, "w") as f:
+        json.dump(cookies, f)
+
+    # 3. Write a tiny, independent Python script to launch Chrome and stay alive
+    runner_code = f"""
+import asyncio
+import json
+from playwright.async_api import async_playwright
+
+async def run():
+    with open(r'{cookie_file}', 'r') as f:
+        cookies = json.load(f)
+
+    try:
+        async with async_playwright() as p:
+            # channel="chrome" forces it to use your REAL Google Chrome installation
+            browser = await p.chromium.launch(
+                channel="chrome", 
+                headless=False,
+                args=["--start-maximized"]
+            )
+            context = await browser.new_context(
+                viewport=None,
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            )
+
+            pw_cookies = []
+            for name, value in cookies.items():
+                pw_cookies.append({{
+                    "name": name, "value": value,
+                    "domain": "vtop.vitap.ac.in", "path": "/",
+                    "httpOnly": False, "secure": True, "sameSite": "Lax"
+                }})
+            await context.add_cookies(pw_cookies)
+
+            page = await context.new_page()
+            await page.goto("https://vtop.vitap.ac.in/vtop/content", wait_until="domcontentloaded")
+            
+            # This infinite loop keeps Chrome open until YOU click the 'X' button
+            while browser.is_connected():
+                await asyncio.sleep(2)
+                
+    except Exception as e:
+        pass # Die silently if Chrome gets closed by the user
+
+asyncio.run(run())
+"""
     
+    runner_file = os.path.join(temp_dir, "vtop_detached_browser.py")
+    with open(runner_file, "w") as f:
+        f.write(runner_code)
+
+    # 4. Launch the script completely detached from the CLI
+    try:
+        if sys.platform == "win32":
+            # Windows flags to completely sever the process from the CLI
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            subprocess.Popen(
+                [sys.executable, runner_file], 
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            # Mac/Linux flag to sever the process
+            subprocess.Popen(
+                [sys.executable, runner_file], 
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        print(f"   {Fore.GREEN}[✓] Chrome opened! You can now close or refresh the CLI safely.")
+    except Exception as e:
+        print(f"   {Fore.RED}[x] Failed to spawn detached browser: {e}")

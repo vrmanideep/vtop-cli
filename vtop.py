@@ -51,7 +51,7 @@ from vitap_vtop_client.client import VtopClient
 from services import *
 
 # --- Configuration ---
-CURRENT_VERSION = "5.0.2"
+CURRENT_VERSION = "5.1.0"
 
 def check_for_updates():
     # Imports kept inside so the updater is 100% self-contained
@@ -237,6 +237,50 @@ def print_grade_history(data):
     print(f"   {Fore.CYAN}CREDITS REGISTERED    : {Fore.WHITE}{s.get('registered')}")
     print(f"   {Fore.CYAN}-------------------------------------------\n")
 
+def print_timetable(data):
+    if not data:
+        print(f"   {PEACH}(No timetable found)")
+        return
+        
+    # Adjusted column widths to fit the new course types and potentially longer venues
+    print(f"   {Fore.CYAN}{'TIME':<15} {'VENUE':<12} {'CODE (TYPE)':<16} {'SLOT':<15} {'COURSE NAME'}")
+    print(f"   {Fore.CYAN}" + "=" * 110)
+    
+    day_order = {"MONDAY": 1, "TUESDAY": 2, "WEDNESDAY": 3, "THURSDAY": 4, "FRIDAY": 5, "SATURDAY": 6, "SUNDAY": 7}
+    sorted_days = sorted(data.keys(), key=lambda d: day_order.get(d.upper(), 99))
+    
+    for day in sorted_days:
+        classes = data[day]
+        if not isinstance(classes, list) or not classes: 
+            continue
+            
+        print(f"   {PEACH}{Style.BRIGHT}[{day.upper()}]")
+        
+        # Safely sort using the explicit 'start_time' parsed from the new backend
+        try: 
+            classes.sort(key=lambda x: x.get('start_time', '23:59'))
+        except Exception: 
+            pass
+            
+        for c in classes:
+            time_str = c.get('time', '-')        
+            venue    = c.get('venue', '-')       
+            code     = c.get('course_code', '-') 
+            c_type   = c.get('course_type', '') 
+            name     = c.get('course_name', '-') 
+            slot     = c.get('slot', '-')        
+            
+            # Clean up trailing hyphens from the slot parser
+            if slot.endswith('-'): 
+                slot = slot[:-1].strip()
+                
+            # Combine Course Code and Type (e.g., CSE1005 (ETH))
+            code_display = f"{code} ({c_type})" if c_type else code
+                
+            print(f"   {Fore.WHITE}{time_str:<15} {venue:<12} {Fore.GREEN}{code_display:<16} {PEACH}{slot:<15} {Fore.WHITE}{name}")
+            
+        print(f"   {Fore.CYAN}{'-' * 110}")
+
 def print_today_schedule(data):
     if not data:
         print(f"   {PEACH}(No timetable data available)")
@@ -399,30 +443,6 @@ def print_marks(data):
                 
         print(f"   {Fore.CYAN}" + "-" * 145)
 
-def print_timetable(data):
-    if not data:
-        print(f"   {PEACH}(No timetable found)")
-        return
-    print(f"   {Fore.CYAN}{'TIME':<15} {'VENUE':<8} {'CODE':<10} {'SLOT':<15} {'COURSE NAME'}")
-    print(f"   {Fore.CYAN}" + "=" * 100)
-    day_order = {"MONDAY": 1, "TUESDAY": 2, "WEDNESDAY": 3, "THURSDAY": 4, "FRIDAY": 5, "SATURDAY": 6, "SUNDAY": 7}
-    sorted_days = sorted(data.keys(), key=lambda d: day_order.get(d.upper(), 99))
-    for day in sorted_days:
-        classes = data[day]
-        if not isinstance(classes, list) or not classes: continue
-        print(f"   {PEACH}{Style.BRIGHT}[{day.upper()}]")
-        try: classes.sort(key=lambda x: x.get('time', '23:59').split('-')[0].strip())
-        except: pass
-        for c in classes:
-            time_str = c.get('time', '-')        
-            venue    = c.get('venue', '-')       
-            code     = c.get('course_code', '-') 
-            name     = c.get('course_name', '-') 
-            slot     = c.get('slot', '-')        
-            if slot.endswith('-'): slot = slot[:-1].strip()
-            print(f"   {Fore.WHITE}{time_str:<15} {venue:<8} {Fore.GREEN}{code:<10} {PEACH}{slot:<15} {Fore.WHITE}{name}")
-        print(f"   {Fore.CYAN}{'-' *100}")
-
 def print_exam_schedule(data):
     if not data:
         print(f"   {PEACH}(No exams scheduled)")
@@ -567,7 +587,7 @@ def printGeneralOuting(history):
         f"{'PLACE':<20} "
         f"{'PURPOSE':<25} "
         f"{'IN DATE':<11} {'TIME':<9} "
-        f"{'STATUS':<8} {'PASS'}"
+        f"{'STATUS':<14} {'PASS'}"
     )
     
     print(header)
@@ -609,7 +629,7 @@ def printGeneralOuting(history):
             f"{place:<20} "
             f"{purp:<25} "
             f"{in_d:<11} {h['in_time']:<9} "
-            f"{stat_display:<18} {pass_display}"
+            f"{stat_display:<24} {pass_display}"
         )
 
     print(f"   {Fore.CYAN}" + "─" * 120)
@@ -719,37 +739,47 @@ async def main():
             except Exception as e:
                 print(f"   {Fore.RED}[x] Connection broke while scraping data: {e}")
                 continue 
-            asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)
             student_name = profile_data.get("basic", {}).get("name", "Student")
             
-            # --- SEMESTER AUTO-SELECTION ---
+           # --- SEMESTER AUTO-SELECTION (LOCAL CACHE) ---
             target_sem = available_sems[0]['id'] if available_sems else None
             current_sem_name = available_sems[0]['name'] if available_sems else "None"
-            """
-            # If a new semester drops for registration, data in semester index 0 will be empty.
-            # We do a quick background ping to verify if it has active classes.
+            
             if available_sems and len(available_sems) > 1:
-                print(f"   {Fore.CYAN}[.] Verifying active semester data...", end="\r")
-                tt_check = await fetchTimetable(client, target_sem)
+                import json
+                from datetime import datetime
+                import os
                 
-                if not tt_check:
-                    # Wipe the line and print the switch notice
-                    print(" " * 50, end="\r") 
-                    print(f"   {PEACH}[!] '{current_sem_name}' is empty (Registration phase). Auto-switching to active semester...")
-                    target_sem = available_sems[1]['id']
-                    current_sem_name = available_sems[1]['name']
-                else:
-                    print(" " * 50, end="\r") # Clean up the verifying message silently
-            # -------------------------------------
-
-            #print(f"\n{Fore.CYAN}{'='*65}\n")
-            """
-
-            print(f"\n{Fore.CYAN}{'='*65}\n")
+                try:
+                    if os.path.exists("bunk_cache.json"):
+                        with open("bunk_cache.json", "r") as f:
+                            cache = json.load(f)
+                            
+                        sem_starts = cache.get("semester_starts", {})
+                        
+                        # Check if the upcoming semester has a registered start date in our JSON
+                        if current_sem_name in sem_starts:
+                            start_date_str = sem_starts[current_sem_name]
+                            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+                            today = datetime.now().date()
+                            
+                            # If today is BEFORE the start date, drop to index 1
+                            if today < start_date:
+                                print(f"   {PEACH}[!] '{current_sem_name}' starts on {start_date_str}. Auto-switching to active...")
+                                target_sem = available_sems[1]['id']
+                                current_sem_name = available_sems[1]['name']
+                except Exception as e:
+                    pass # Fail silently and stick to index 0 if JSON is corrupted or missing
+            # ---------------------------------------------------
+            
+            print(f"\n{Fore.CYAN}{'-'*65}\n")
+            
+            print(f"\n{Fore.CYAN}{'-'*65}\n")
             print(f" {Fore.WHITE}NAME:       : {Fore.GREEN}{student_name}")
             print(f" {Fore.WHITE}REG NO      : {Fore.CYAN}{reg_no}")
             print(f" {Fore.WHITE}CURRENT SEM : {PEACH}{current_sem_name}")
-            print(f"{Fore.CYAN}{'='*65}\n")
+            print(f"{Fore.CYAN}{'-'*65}\n")
             
             while True:
                 print_header("MAIN MENU")
@@ -776,12 +806,48 @@ async def main():
                 print(f"   {Fore.WHITE}14. Change Semester")
                 print(f"   {Fore.WHITE}15. Update Credentials")
                 print(f"   {Fore.WHITE}16. Bunk Predictor (Simulate Absences)")
+                print(f"   {Fore.WHITE}17. Open VTOP in Browser")
 
                 print(f"\n   {Fore.RED}0.  Exit")
                 print(f"   {Fore.CYAN}" + "─" * 40)
                 
                 print("", end="\n", flush=True)
-                choice = input(f"{PEACH}[{reg_no}] Enter choice (0-16): {Fore.WHITE}").strip()
+                choice = input(f"   {PEACH}Select Option {Fore.WHITE}[1-17, or 'r' to Sync]: {Style.RESET_ALL}").strip().lower()
+                
+                # --- THE SYNC SHORTCUT ---
+                if choice in ['r', 'sync', 'refresh']:
+                    print(f"\n   {Fore.CYAN}[.] Force syncing all data with VTOP...")
+                    try:
+                        # 1. Re-fetch Profile (Optional, usually doesn't change, but good for completeness)
+                        print(f"   {Fore.CYAN}    -> Fetching Profile...", end="\r")
+                        profile_data = await fetchProfile(client)
+                        print(f"   {Fore.GREEN}    -> Profile Synced!    ")
+
+                        # 2. Re-fetch Timetable (Pass your current target_sem)
+                        print(f"   {Fore.CYAN}    -> Fetching Timetable...", end="\r")
+                        timetable_data = await fetchTimetable(client, target_sem) 
+                        print(f"   {Fore.GREEN}    -> Timetable Synced!    ")
+
+                        # 3. Re-fetch Attendance (if you cache it globally, otherwise skip)
+                        print(f"   {Fore.CYAN}    -> Fetching Attendance...", end="\r")
+                        attendance_data = await fetchAttendance(client, target_sem)
+                        print(f"   {Fore.GREEN}    -> Attendance Synced!    ")
+                        
+                        # 4. Re-fetch Marks (if you cache it globally, otherwise skip)
+                        print(f"   {Fore.CYAN}    -> Fetching Marks...", end="\r")
+                        marks_data = await fetchMarks(client, target_sem)
+                        print(f"   {Fore.GREEN}    -> Marks Synced!       ")
+
+                        print(f"\n   {Fore.GREEN}[✓] All data successfully synchronized!{Style.RESET_ALL}")
+                        
+                        import asyncio
+                        await asyncio.sleep(1.5) # Brief pause so they see the success message
+                        
+                    except Exception as e:
+                        print(f"\n   {Fore.RED}[x] Sync failed: {e}{Style.RESET_ALL}")
+                        await asyncio.sleep(2)
+                        
+                    continue
                 
                 if choice == '0':
                     print(f"{PEACH}Logging out... Goodbye!")
@@ -1285,10 +1351,19 @@ async def main():
                             if place == '0': continue
                             purpose = input(f"   {Fore.WHITE}Purpose        : {Fore.WHITE}").strip()
                             if purpose == '0': continue
-                            out_d = input(f"   {Fore.WHITE}Out Date (DD-MMM-YYYY): {Fore.WHITE}").strip()
+                            try:
+                                out_d_raw = input(f"   {Fore.WHITE}Out Date (e.g. 3-3-26): {Fore.WHITE}").strip()
+                                if out_d_raw == '0': continue
+                                out_d = to_vtop_date(out_d_raw)
+
+                                in_d_raw = input(f"   {Fore.WHITE}In Date (e.g. 5-3-26): {Fore.WHITE}").strip()
+                                if in_d_raw == '0': continue
+                                in_d = to_vtop_date(in_d_raw)
+                            except ValueError as e:
+                                print(f"   {Fore.RED}[!] {e}")
+                                continue
                             if out_d == '0': continue
                             out_t = input(f"   {Fore.WHITE}Out Time (HH:MM): {Fore.WHITE}").strip()
-                            in_d  = input(f"   {Fore.WHITE}In Date         : {Fore.WHITE}").strip()
                             in_t  = input(f"   {Fore.WHITE}In Time (HH:MM): {Fore.WHITE}").strip()
                             
                             confirm = input(f"\n   {PEACH}Submit this request? (y/n): {Fore.WHITE}").lower()
@@ -1343,9 +1418,15 @@ async def main():
                                 
                                 purpose = input(f"\n   {PEACH}Purpose (Max 20 chars): {Fore.WHITE}").strip()
                                 if purpose == '0': continue
-                                out_d = input(f"   {PEACH}Date (DD-MMM-YYYY): {Fore.WHITE}").strip()
-                                if out_d == '0': continue
-                                
+                                # AFTER
+                                try:
+                                    out_d_raw = input(f"   {PEACH}Date (e.g. 3-3-26): {Fore.WHITE}").strip()
+                                    if out_d_raw == '0': continue
+                                    out_d = to_vtop_date(out_d_raw)
+                                except ValueError as e:
+                                    print(f"   {Fore.RED}[!] {e}")
+                                    continue
+                                if out_d == '0': continue                               
                                 times = ["9:30 AM- 3:30PM", "10:30 AM- 4:30PM", "11:30 AM- 5:30PM", "12:30 PM- 6:30PM"]
                                 print(f"\n   {Fore.CYAN}Select Outing Time:")
                                 for i, t in enumerate(times): print(f"   {Fore.WHITE}{i+1}. {t}")
@@ -1510,17 +1591,23 @@ async def main():
 
                         valid_dates = []
                         try:
+                            from services import parse_date
                             if 'to' in bunk_input.lower():
                                 start_str, end_str = [x.strip() for x in bunk_input.lower().split('to')]
-                                start_dt = dt_obj.strptime(f"{start_str}-{current_year}", "%d-%m-%Y")
-                                end_dt = dt_obj.strptime(f"{end_str}-{current_year}", "%d-%m-%Y")
+                                start_dt = parse_date(start_str)
+                                end_dt   = parse_date(end_str)
+                                if end_dt < start_dt:
+                                    print(f"   {Fore.RED}[!] End date is before start date.")
+                                    continue
                                 delta = end_dt - start_dt
-                                for i in range(delta.days + 1): valid_dates.append(start_dt + timedelta(days=i))
+                                for i in range(delta.days + 1):
+                                    valid_dates.append(start_dt + timedelta(days=i))
                             else:
                                 date_strs = [x.strip() for x in bunk_input.split(',')]
-                                for ds in date_strs: valid_dates.append(dt_obj.strptime(f"{ds}-{current_year}", "%d-%m-%Y"))
-                        except Exception as e:
-                            print(f"   {Fore.RED}[!] Invalid date format.")
+                                for ds in date_strs:
+                                    valid_dates.append(parse_date(ds))
+                        except ValueError as e:
+                            print(f"   {Fore.RED}[!] {e}")
                             continue
 
                         # --- SEMESTER BOUNDARY CHECK ---
@@ -1576,8 +1663,12 @@ async def main():
                     except Exception as e: 
                         print(f"   {Fore.RED}[!] Simulation error: {e}")
 
+                elif choice == '17':
+                    print_header("OPEN VTOP IN BROWSER")
+                    await open_vtop_browser(client)
+
 if __name__ == "__main__":
-    check_for_updates()
+    #check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

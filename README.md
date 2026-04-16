@@ -59,6 +59,7 @@ python vtop.py
 14. **Change Semester:** Switch context to view previous semester data.
 15. **Update Credentials**: Allows you to change your credentials to login when you changed them in V-TOP.
 16. **Bunk Simulator**: Allows you to simulate attendance impact before skipping class by printing the attendnace of each class if you skipped on a particular date of your choice.
+17. **Open V-TOP in browser**: Opens a logged in, ready-to-use V-TOP page.
 
 ### ⚠️ Disclaimer
 This is an unofficial client for the VIT-AP VTOP portal. It is developed for educational purposes and personal use.

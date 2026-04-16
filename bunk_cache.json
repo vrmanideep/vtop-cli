@@ -51,5 +51,10 @@
         "18-05": "FAT Exams",
         "19-05": "FAT Exams",
         "20-05": "Commencement of Long and Short- 1 Summer Semesters"
+    },
+
+    "semester_starts": {
+        "Summer Semester1 2025-26": "2026-05-20",
+        "Fall Semester 2026-27": "2026-07-22"
     }
 }
