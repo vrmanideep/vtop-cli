@@ -18,7 +18,7 @@ def check_dependencies():
         
         try:
             subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"]
+                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "playwright", "install", "chromium", "--quiet"]
             )
             subprocess.check_call([sys.executable, "-m", "pip", "install", "colorama", "--quiet"])
             
@@ -1586,30 +1586,53 @@ async def main():
                                             print(f"   {Fore.CYAN}" + "-"*45)
                             except Exception: pass
 
-                        bunk_input = input(f"   {PEACH}Enter dates/range to bunk (ex: 24-2, 5-3 or 3-3 to 6-3): {Fore.WHITE}").strip()
+                        bunk_input = input(f"   {PEACH}Enter dates (e.g. 21-4, 28-4 to 2-5, 5-5): {Fore.WHITE}").strip()
                         if not bunk_input: continue
 
                         valid_dates = []
                         try:
                             from services import parse_date
-                            if 'to' in bunk_input.lower():
-                                start_str, end_str = [x.strip() for x in bunk_input.lower().split('to')]
-                                start_dt = parse_date(start_str)
-                                end_dt   = parse_date(end_str)
-                                if end_dt < start_dt:
-                                    print(f"   {Fore.RED}[!] End date is before start date.")
+                            current_year = dt.now().year
+
+                            # Split top-level by comma first
+                            segments = [s.strip() for s in bunk_input.split(',')]
+
+                            for segment in segments:
+                                segment = segment.strip()
+                                if not segment:
                                     continue
-                                delta = end_dt - start_dt
-                                for i in range(delta.days + 1):
-                                    valid_dates.append(start_dt + timedelta(days=i))
-                            else:
-                                date_strs = [x.strip() for x in bunk_input.split(',')]
-                                for ds in date_strs:
-                                    valid_dates.append(parse_date(ds))
+
+                                if ' to ' in segment.lower():
+                                    # Range: "28-4 to 2-5"
+                                    start_str, end_str = [x.strip() for x in segment.lower().split(' to ')]
+                                    start_dt = parse_date(start_str, default_year=current_year)
+                                    end_dt   = parse_date(end_str,   default_year=current_year)
+
+                                    if end_dt < start_dt:
+                                        # Handle year rollover e.g. 28-12 to 2-1
+                                        end_dt = parse_date(end_str, default_year=current_year + 1)
+
+                                    if end_dt < start_dt:
+                                        print(f"   {Fore.RED}[!] End date is before start date in range: '{segment}'")
+                                        valid_dates = []
+                                        break
+
+                                    delta = (end_dt - start_dt).days
+                                    for i in range(delta + 1):
+                                        valid_dates.append(start_dt + timedelta(days=i))
+                                else:
+                                    # Single date: "21-4"
+                                    valid_dates.append(parse_date(segment, default_year=current_year))
+
+                            if not valid_dates:
+                                continue
+
+                            # Deduplicate and sort
+                            valid_dates = sorted(set(valid_dates))
+
                         except ValueError as e:
                             print(f"   {Fore.RED}[!] {e}")
                             continue
-
                         # --- SEMESTER BOUNDARY CHECK ---
                         sem_end_dt = dt_obj(current_year, 5, 19) 
                         if max(valid_dates) > sem_end_dt:

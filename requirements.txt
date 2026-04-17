@@ -1,22 +1,18 @@
-  # --- Networking & Parsing ---
+
 httpx
 beautifulsoup4
 lxml
 requests
-# --- Dashboard UI ---
+
 rich
 colorama
 
-# --- Data Validation ---
 pydantic
 
-# --- Image Processing (Captcha Solving) ---
-# Required for handling captcha images in the client
 pillow
 numpy
 pwinput
 
-# --- Optional/Dev ---
-# Useful if you plan to build/distribute the package later
 setuptools
 wheel
+playwright>=1.40.0

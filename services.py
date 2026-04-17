@@ -13,32 +13,40 @@ from vitap_vtop_client.client import VtopClient
 
 PEACH = '\033[38;2;245;231;158m'
 
-def parse_date(raw: str):
+def parse_date(raw: str, default_year: int = None):
     """
-    Accepts messy user input and returns a datetime object.
-    Handles: 3-3-26, 3-3-2026, 3/3/26, 3.3.26, 3 3 26, 3-mar-26, 3-march-26
+    Accepts:
+      dd-mm-yy, dd-mm-yyyy, dd-mm (assumes current/default year)
+      dd/mm/yy, dd.mm.yy, dd mm yy
+      dd-mon-yy, dd-month-yyyy
+    Returns a datetime object.
     """
     from datetime import datetime as dt_obj
     import re
 
-    raw = raw.strip().lower()
+    if default_year is None:
+        default_year = dt_obj.now().year
 
-    # Normalize separators to a single space
+    raw = raw.strip().lower()
     raw = re.sub(r'[-/.\s]+', ' ', raw)
     parts = raw.split()
 
+    if len(parts) == 2:
+        # dd-mm only — inject default year
+        parts.append(str(default_year))
+
     if len(parts) != 3:
-        raise ValueError(f"Cannot parse date: '{raw}'. Use format like 3-3-26 or 3-Mar-2026")
+        raise ValueError(f"Cannot parse: '{raw}'. Use dd-mm, dd-mm-yy, or dd-mm-yyyy")
 
     day_str, month_str, year_str = parts
 
-    # --- Resolve Day ---
+    # --- Day ---
     try:
         day = int(day_str)
     except ValueError:
         raise ValueError(f"Invalid day: '{day_str}'")
 
-    # --- Resolve Month ---
+    # --- Month ---
     month_map = {
         "jan": 1, "january": 1,
         "feb": 2, "february": 2,
@@ -61,24 +69,19 @@ def parse_date(raw: str):
     else:
         raise ValueError(f"Invalid month: '{month_str}'")
 
-    # --- Resolve Year ---
+    # --- Year ---
     year = int(year_str)
     if year < 100:
-        year += 2000  # 26 → 2026
+        year += 2000
 
     return dt_obj(year, month, day)
 
+
 def to_vtop_date(raw: str) -> str:
-    """
-    Parses user input and returns VTOP-format date string: 03-Mar-2026
-    Used by General Outing and Weekend Outing form submissions.
-    """
     return parse_date(raw).strftime("%d-%b-%Y")
 
+
 def to_display_date(raw: str) -> str:
-    """
-    Parses user input and returns a clean display string: 03-Mar-2026
-    """
     return parse_date(raw).strftime("%d-%b-%Y")
 
 def to_bunk_date(raw: str) -> str:
@@ -1961,104 +1964,161 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
     return result_msg
 
 async def open_vtop_browser(client):
-    import json
     import tempfile
     import subprocess
     import sys
     import os
-    from colorama import Fore, Style
+    import json
+    from colorama import Fore
 
-    # 1. Extract cookies from httpx client
-    cookies = {}
+    # --- 1. EXTRACT LIVE SESSION COOKIES FROM THE HTTPX CLIENT ---
+    vtop_cookies = []
     try:
-        jar = client._client.cookies
-        for cookie in jar.jar:
-            cookies[cookie.name] = cookie.value
-    except Exception:
+        for cookie in client._client.cookies.jar:
+            vtop_cookies.append({
+                "name": cookie.name,
+                "value": cookie.value,
+                "domain": cookie.domain or "vtop.vitap.ac.in",
+                "path": cookie.path or "/",
+                "secure": cookie.secure,
+                "httpOnly": False,
+                "sameSite": "Lax"
+            })
+    except Exception as e:
+        print(f"   {Fore.RED}[x] Could not extract session cookies: {e}")
+        return
+
+    if not vtop_cookies:
+        print(f"   {Fore.RED}[x] No cookies found in session. Are you logged in?")
+        return
+
+    # Write cookies to a temp file so the subprocess can read them
+    temp_dir = tempfile.gettempdir()
+    cookies_file = os.path.join(temp_dir, "vtop_session_cookies.json")
+    runner_file  = os.path.join(temp_dir, "vtop_browser_login.py")
+    log_file     = os.path.join(temp_dir, "vtop_browser_log.txt")
+
+    with open(cookies_file, "w", encoding="utf-8") as f:
+        json.dump(vtop_cookies, f)
+
+    print(f"   {Fore.CYAN}[.] Session cookies extracted ({len(vtop_cookies)} cookies). Launching browser...")
+
+    # --- 2. THE BROWSER RUNNER SCRIPT ---
+    # This runs in a separate process. It opens Chrome, injects the CLI's cookies,
+    # then navigates directly to the VTOP dashboard — no login form, no CAPTCHA.
+    runner_code = f'''# -*- coding: utf-8 -*-
+import asyncio
+import json
+import os
+import sys
+
+COOKIES_FILE = {repr(cookies_file)}
+TARGET_URL   = "https://vtop.vitap.ac.in/vtop/content"
+
+async def run():
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("[x] Playwright not installed. Run: pip install playwright && playwright install chromium", flush=True)
+        sys.exit(1)
+
+    with open(COOKIES_FILE, "r") as f:
+        cookies = json.load(f)
+
+    async with async_playwright() as p:
+        # Use a FRESH temp profile so it never conflicts with any existing Chrome
+        user_data_dir = os.path.join(
+            os.environ.get("TEMP", os.path.expanduser("~")),
+            "vtop_browser_session"
+        )
+        os.makedirs(user_data_dir, exist_ok=True)
+
         try:
-            cookies = dict(client._client.cookies)
+            context = await p.chromium.launch_persistent_context(
+                user_data_dir,
+                channel="chrome",       # Uses real Chrome; falls back gracefully
+                headless=False,
+                args=["--start-maximized"],
+                viewport=None,
+                ignore_https_errors=True  # Mirrors the CLI's SSL bypass
+            )
+        except Exception:
+            # Fallback: use bundled Chromium if real Chrome isn't available
+            browser = await p.chromium.launch(headless=False, args=["--start-maximized"])
+            context = await browser.new_context(
+                viewport=None,
+                ignore_https_errors=True
+            )
+
+        # --- INJECT THE CLI'S LIVE SESSION COOKIES ---
+        # This is the key step: browser inherits the authenticated session
+        # from the CLI without touching the login form at all.
+        try:
+            await context.add_cookies(cookies)
+            print(f"[+] Injected {{len(cookies)}} session cookies.", flush=True)
+        except Exception as e:
+            print(f"[!] Cookie injection warning: {{e}}", flush=True)
+
+        page = await context.new_page()
+
+        # Navigate directly to dashboard — should land logged in
+        print("[.] Opening VTOP dashboard...", flush=True)
+        try:
+            await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            print(f"[x] Navigation failed: {{e}}", flush=True)
+
+        # Verify we actually landed on the dashboard and not the login page
+        try:
+            await page.wait_for_selector("#vtopLink, .navbar, #quickLinkModalCenter", timeout=8000)
+            print("[+] Dashboard loaded. Session is live.", flush=True)
+        except Exception:
+            current = page.url
+            if "vtopLoginForm" in current or "login" in current.lower():
+                print("[!] Session expired or cookies rejected. Falling back to manual login...", flush=True)
+                # Graceful fallback: load the login page and let user handle it
+                try:
+                    await page.goto("https://vtop.vitap.ac.in/vtop/", wait_until="domcontentloaded")
+                    await page.wait_for_selector("#username", timeout=10000)
+                    username = {repr(getattr(client, "username", ""))}
+                    password = {repr(getattr(client, "password", getattr(client, "_password", "")))}
+                    if username:
+                        await page.fill("#username", username)
+                    if password:
+                        await page.fill("#password", password)
+                    print("[!] Credentials pre-filled. Solve CAPTCHA manually, then click Sign In.", flush=True)
+                except Exception as fe:
+                    print(f"[x] Fallback also failed: {{fe}}", flush=True)
+            else:
+                print(f"[.] Loaded: {{current}}", flush=True)
+
+        # Keep alive until user closes the browser
+        print("[.] Browser is open. Close it to exit.", flush=True)
+        try:
+            while True:
+                if not context.pages:
+                    break
+                await asyncio.sleep(2)
         except Exception:
             pass
 
-    if not cookies:
-        print(f"   {Fore.RED}[x] No session cookies found. Cannot launch browser.")
-        return
-
-    print(f"   {Fore.CYAN}[.] Launching independent Chrome session...")
-
-    # 2. Save cookies to a temporary file so the detached process can read them
-    temp_dir = tempfile.gettempdir()
-    cookie_file = os.path.join(temp_dir, "vtop_cookies.json")
-    with open(cookie_file, "w") as f:
-        json.dump(cookies, f)
-
-    # 3. Write a tiny, independent Python script to launch Chrome and stay alive
-    runner_code = f"""
-import asyncio
-import json
-from playwright.async_api import async_playwright
-
-async def run():
-    with open(r'{cookie_file}', 'r') as f:
-        cookies = json.load(f)
-
-    try:
-        async with async_playwright() as p:
-            # channel="chrome" forces it to use your REAL Google Chrome installation
-            browser = await p.chromium.launch(
-                channel="chrome", 
-                headless=False,
-                args=["--start-maximized"]
-            )
-            context = await browser.new_context(
-                viewport=None,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-            )
-
-            pw_cookies = []
-            for name, value in cookies.items():
-                pw_cookies.append({{
-                    "name": name, "value": value,
-                    "domain": "vtop.vitap.ac.in", "path": "/",
-                    "httpOnly": False, "secure": True, "sameSite": "Lax"
-                }})
-            await context.add_cookies(pw_cookies)
-
-            page = await context.new_page()
-            await page.goto("https://vtop.vitap.ac.in/vtop/content", wait_until="domcontentloaded")
-            
-            # This infinite loop keeps Chrome open until YOU click the 'X' button
-            while browser.is_connected():
-                await asyncio.sleep(2)
-                
-    except Exception as e:
-        pass # Die silently if Chrome gets closed by the user
+        print("[.] Browser closed.", flush=True)
 
 asyncio.run(run())
-"""
-    
-    runner_file = os.path.join(temp_dir, "vtop_detached_browser.py")
-    with open(runner_file, "w") as f:
+'''
+
+    with open(runner_file, "w", encoding="utf-8") as f:
         f.write(runner_code)
 
-    # 4. Launch the script completely detached from the CLI
     try:
-        if sys.platform == "win32":
-            # Windows flags to completely sever the process from the CLI
-            DETACHED_PROCESS = 0x00000008
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            subprocess.Popen(
-                [sys.executable, runner_file], 
-                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-            )
-        else:
-            # Mac/Linux flag to sever the process
-            subprocess.Popen(
-                [sys.executable, runner_file], 
-                start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        print(f"   {Fore.GREEN}[✓] Chrome opened! You can now close or refresh the CLI safely.")
+        proc = subprocess.Popen(
+            [sys.executable, "-u", runner_file],
+            stdout=open(log_file, "w", encoding="utf-8"),
+            stderr=subprocess.STDOUT,
+            cwd=temp_dir
+        )
+        #print(f"   {Fore.GREEN}[+] Browser launched (PID: {proc.pid})")
+        print(f"   {Fore.GREEN}[+] VTOP session launched — no login needed.")
+        print(f"   {Fore.CYAN}[i] Log: {log_file}")
     except Exception as e:
-        print(f"   {Fore.RED}[x] Failed to spawn detached browser: {e}")
+        print(f"   {Fore.RED}[x] Failed to launch browser: {e}")
