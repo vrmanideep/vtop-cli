@@ -1,6 +1,8 @@
 from typing import List
 import httpx
 import asyncio
+import json
+import os
 
 from .constants import VTOP_BASE_URL
 
@@ -27,6 +29,7 @@ from .utils import solve_captcha
 class VtopClient:
     """
     An asynchronous client for interacting with the VIT-AP VTOP portal.
+    Includes session persistence to bypass CAPTCHA and 2FA on subsequent runs.
     """
 
     def __init__(
@@ -59,10 +62,59 @@ class VtopClient:
                 "Connection": "keep-alive",
             },
         )
+        
+        # Automatically load saved session cookies on startup
+        self._load_session()
+
+    def _save_session(self):
+        """Saves the current httpx cookies to a local file, handling duplicate names safely."""
+        try:
+            cookie_data = []
+            # Dig into the underlying CookieJar to avoid the dictionary key collision
+            for cookie in self._client.cookies.jar:
+                cookie_data.append({
+                    "name": cookie.name,
+                    "value": cookie.value,
+                    "domain": cookie.domain,
+                    "path": cookie.path,
+                })
+                
+            with open("vtop_session.json", "w") as f:
+                json.dump(cookie_data, f, indent=4)
+                
+        except Exception as e:
+            print(f"VtopClient: Failed to save session cookies: {e}")
+
+    def _load_session(self):
+        """Loads saved cookies from file into the httpx client."""
+        if os.path.exists("vtop_session.json"):
+            try:
+                with open("vtop_session.json", "r") as f:
+                    cookie_data = json.load(f)
+                    # Reconstruct the cookies with their specific domains and paths
+                    for c in cookie_data:
+                        self._client.cookies.set(
+                            c["name"], 
+                            c["value"], 
+                            domain=c["domain"], 
+                            path=c["path"]
+                        )
+            except Exception as e:
+                print(f"VtopClient: Failed to load session cookies: {e}")
+
+    def _load_session(self):
+        """Loads saved cookies from file into the httpx client."""
+        if os.path.exists("vtop_session.json"):
+            try:
+                with open("vtop_session.json", "r") as f:
+                    cookies = json.load(f)
+                    self._client.cookies.update(cookies)
+            except Exception:
+                pass
 
     async def _perform_login_sequence(self) -> LoggedInStudent:
         """
-        Handles the complete login sequence.
+        Handles the complete login sequence including fetching tokens, solving CAPTCHA, and 2FA.
         """
         for attempt in range(self.max_login_retries):
             print(
@@ -86,6 +138,10 @@ class VtopClient:
                     captcha_value,
                 )
                 self._logged_in_student = logged_in_student
+                
+                # --- Save the trusted session to disk after successful login/2FA ---
+                self._save_session()
+                
                 print(f"VtopClient: Login successful for {self.username[:5]}****")
                 return logged_in_student
 
@@ -126,12 +182,43 @@ class VtopClient:
 
     async def _ensure_logged_in(self) -> LoggedInStudent:
         """
-        Ensures the client is logged in. If not, performs login.
+        Ensures the client is logged in. Tests saved cookies first, 
+        and falls back to a fresh login sequence if they are expired.
         """
         if self._logged_in_student is not None:
             return self._logged_in_student
 
         async with self._login_lock:
+            # 1. Test the saved session (if cookies exist)
+            if self._client.cookies:
+                try:
+                    from vitap_vtop_client.constants import HEADERS, VTOP_CONTENT_URL
+                    from vitap_vtop_client.utils.find_registration_number import find_registration_number
+                    from vitap_vtop_client.utils import find_csrf
+
+                    print("VtopClient: Found saved session. Validating with VTOP...")
+                    test_resp = await self._client.get(VTOP_CONTENT_URL, headers=HEADERS)
+
+                    if "Dashboard" in test_resp.text or "StudentProfile" in test_resp.text:
+                        # Session is valid! Extract the fresh CSRF token and we are done.
+                        reg_num = find_registration_number(test_resp)
+                        post_login_csrf = find_csrf(test_resp.text)
+                        
+                        self._logged_in_student = LoggedInStudent(
+                            registration_number=reg_num,
+                            post_login_csrf_token=post_login_csrf
+                        )
+                        print(f"VtopClient: Saved session restored seamlessly for {reg_num[:5]}****")
+                        return self._logged_in_student
+                    else:
+                        print("VtopClient: Saved session expired. Proceeding to fresh login.")
+                        self._client.cookies.clear() # Wipe the dead cookies
+                        
+                except Exception as e:
+                    print(f"VtopClient: Session validation failed ({e}). Proceeding to fresh login.")
+                    self._client.cookies.clear()
+
+            # 2. Proceed to fresh login sequence if cookies were dead or missing
             if self._logged_in_student is None:
                 print(f"VtopClient: Not logged in for {self.username[:5]}****. Initiating login.")
                 await self._perform_login_sequence()
@@ -152,3 +239,5 @@ class VtopClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+
+        

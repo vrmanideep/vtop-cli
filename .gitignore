@@ -33,3 +33,4 @@ powershell.bat
 # --- OS Generated ---
 .DS_Store
 Thumbs.db
+vtop_session.json
