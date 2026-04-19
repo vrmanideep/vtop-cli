@@ -1691,7 +1691,7 @@ async def main():
                     await open_vtop_browser(client)
 
 if __name__ == "__main__":
-    #check_for_updates()
+    check_for_updates()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
