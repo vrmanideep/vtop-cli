@@ -32,6 +32,21 @@ async def student_login(
     """
     Attempts to log in to the VTOP system using provided credentials and captcha.
     Handles standard login, error redirects, and Two-Factor Authentication (OTP).
+
+    Args:
+        client (httpx.AsyncClient): Async client object for making HTTP requests.
+        csrf_token (str): Cross-Site Request Forgery token required for the login request (from pre-login).
+        registration_number (str): Student Registration Number for logging in.
+        password (str): VTOP Password for logging in.
+        captcha_value (str): Value of the CAPTCHA image solved by the solver.
+
+    Returns:
+        LoggedInStudent: A model containing login success status and the post-login CSRF token.
+
+    Raises:
+        VtopConnectionError: If a network-related issue occurs during the POST request.
+        VtopLoginError: If login fails due to invalid credentials, unexpected redirects, or OTP failures.
+        VtopCaptchaSolvingError: If login fails due to an invalid captcha.
     """
     try:
         data = {

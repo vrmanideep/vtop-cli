@@ -7,13 +7,27 @@ from vitap_vtop_client.utils import find_csrf
 
 
 async def fetch_csrf_token(client: httpx.AsyncClient, max_retries: int = 3) -> str:
+    """
+    Fetches CSRF token from the VTOP website.
+
+    Args:
+        client (httpx.AsyncClient): Async client object for making HTTP requests.
+        max_retries (int): Maximum attempts to fetch the token.
+
+    Returns:
+        str: CSRF token if found.
+
+    Raises:
+        VtopConnectionError: If the HTTP request fails after all retries.
+        VtopCsrfError: If csrf_token is not found in the response after all retries.
+    """
     last_exception = None
 
     for attempt in range(max_retries):
         print(f"Fetching initial CSRF token, attempt {attempt + 1}/{max_retries}...")
         try:
             response = await client.get(VTOP_URL, headers=HEADERS)
-            response.raise_for_status()
+            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
 
             csrf_token = find_csrf(response.text)
 

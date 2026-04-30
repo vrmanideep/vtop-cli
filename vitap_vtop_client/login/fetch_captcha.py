@@ -7,6 +7,20 @@ from vitap_vtop_client.exceptions import VtopConnectionError, VtopCaptchaError
 
 
 async def fetch_captcha(client: httpx.AsyncClient, retries: int) -> str:
+    """
+    Fetches the VTOP login page and extracts the base64 encoded captcha image in it.
+
+    Args:
+        client (httpx.AsyncClient): Client object for making HTTP requests.
+        retries (int): Number of retries for fetching captcha.
+
+    Returns:
+        str: Base64 encoded captcha image data (excluding the data URI prefix)
+
+    Raises:
+        VtopConnectionError: If the HTTP request fails after all retries.
+        VtopCaptchaError: If captcha image is not found in the response after all retries.
+    """
     last_exception = None
 
     for attempt in range(retries):

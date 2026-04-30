@@ -600,7 +600,7 @@ async def fetchMarks(client, semesterId: str) -> dict:
                 mark_title = cols[1].get_text(strip=True)
                 
                 # Added "Experiment" to valid_types
-                valid_types = ["CAT", "FAT", "Assignment", "Digital", "Quiz", "Lab", "Project", "Mid-Term", "performance", "Classroom", "Experiment"]
+                valid_types = ["CAT", "FAT", "Assignment", "Digital", "Quiz", "Lab", "Project", "Mid-Term", "performance", "Classroom", "Experiment", "Venture"]
                 
                 if any(v.lower() in mark_title.lower() for v in valid_types) and "Total" not in mark_title:
                     max_mark = cols[2].get_text(strip=True)
