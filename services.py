@@ -13,14 +13,22 @@ from vitap_vtop_client.client import VtopClient
 
 PEACH = '\033[38;2;245;231;158m'
 
+def get_auth_id(client: VtopClient) -> str:
+    """
+    Extracts the true Registration Number scraped directly from the VTOP dashboard.
+    This guarantees that even if the user logged in using their email or application number,
+    the downstream API payloads will correctly use the expected alphanumeric Reg No.
+    """
+    try:
+        if hasattr(client, "_logged_in_student") and client._logged_in_student:
+            if hasattr(client._logged_in_student, "registration_number") and client._logged_in_student.registration_number:
+                return client._logged_in_student.registration_number
+    except Exception:
+        pass
+    # Fallback to whatever they typed if scraping somehow failed
+    return getattr(client, "username", getattr(client, "reg_no", ""))
+
 def parse_date(raw: str, default_year: int = None):
-    """
-    Accepts:
-      dd-mm-yy, dd-mm-yyyy, dd-mm (assumes current/default year)
-      dd/mm/yy, dd.mm.yy, dd mm yy
-      dd-mon-yy, dd-month-yyyy
-    Returns a datetime object.
-    """
     from datetime import datetime as dt_obj
     import re
 
@@ -32,7 +40,6 @@ def parse_date(raw: str, default_year: int = None):
     parts = raw.split()
 
     if len(parts) == 2:
-        # dd-mm only — inject default year
         parts.append(str(default_year))
 
     if len(parts) != 3:
@@ -40,13 +47,11 @@ def parse_date(raw: str, default_year: int = None):
 
     day_str, month_str, year_str = parts
 
-    # --- Day ---
     try:
         day = int(day_str)
     except ValueError:
         raise ValueError(f"Invalid day: '{day_str}'")
 
-    # --- Month ---
     month_map = {
         "jan": 1, "january": 1,
         "feb": 2, "february": 2,
@@ -69,56 +74,41 @@ def parse_date(raw: str, default_year: int = None):
     else:
         raise ValueError(f"Invalid month: '{month_str}'")
 
-    # --- Year ---
     year = int(year_str)
     if year < 100:
         year += 2000
 
     return dt_obj(year, month, day)
 
-
 def to_vtop_date(raw: str) -> str:
     return parse_date(raw).strftime("%d-%b-%Y")
-
 
 def to_display_date(raw: str) -> str:
     return parse_date(raw).strftime("%d-%b-%Y")
 
 def to_bunk_date(raw: str) -> str:
-    """
-    Parses user input and returns bunk simulator format: 3-3 (DD-MM)
-    Used internally by simulate_multi_day_bunk.
-    """
     d = parse_date(raw)
     return f"{d.day}-{d.month}"
 
 def get_cred(file_path="credentials.txt"):
-    """
-    Reads username from line 1 and password from line 2.
-    If the file is missing or invalid, prompts the user to create it interactively.
-    """
-    # 1. Try to read existing credentials quietly
     if os.path.exists(file_path):
         with open(file_path, "r") as f:
             lines = [line.strip() for line in f.readlines() if line.strip()]
-            
-            # If the file exists and is perfectly valid, return them instantly
             if len(lines) >= 2:
                 return lines[0], lines[1]
             else:
                 print(f"\n   [!] {file_path} is corrupted (needs 2 lines). Let's fix it.")
 
-    # 2. First-Time Setup Wizard
     print("\n   =======================================")
     print("   🚀 FIRST TIME SETUP: VTOP CLI")
     print("   =======================================")
     print(f"   Let's set up your {file_path} file securely.\n")
     
     while True:
-        username = input("   👉 Enter Registration Number (e.g., 21BCExxxx): ").strip().upper()
-        
-        # --- THE MAGIC HAPPENS HERE ---
-        # This replaces getpass and shows asterisks as they type!
+        username = input("   👉 Enter Login ID (Reg No, App No, or Email): ").strip()
+        if '@' not in username:
+            username = username.upper()
+            
         password = pwinput.pwinput(prompt="   👉 Enter VTOP Password: ", mask="*").strip()
         
         if not username or not password:
@@ -126,8 +116,8 @@ def get_cred(file_path="credentials.txt"):
             continue
 
         print("\n   --- Verify Your Details ---")
-        print(f"   Registration No: {username}")
-        print(f"   Password:        {'*' * len(password)}")
+        print(f"   Login ID: {username}")
+        print(f"   Password: {'*' * len(password)}")
         
         confirm = input("\n   Save these credentials and login? (y/n): ").strip().lower()
         
@@ -139,13 +129,9 @@ def get_cred(file_path="credentials.txt"):
         else:
             print("   [!] Setup cancelled. Let's try typing that again.\n")
 
-# Alias for compatibility
 get_credentials = get_cred
-
-# Global Creds
 a, password = get_cred("credentials.txt")
 
-#  SSL BYPASS
 _original_init = httpx.AsyncClient.__init__
 def _patched_init(self, *args, **kwargs):
     kwargs['verify'] = False
@@ -174,7 +160,7 @@ async def fetchTimetable(client, semester_id: str) -> dict:
         return {}
         
     token = client._logged_in_student.post_login_csrf_token
-    reg_no = client.username
+    reg_no = get_auth_id(client)
     
     headers = {
         "X-Requested-With": "XMLHttpRequest", 
@@ -183,18 +169,11 @@ async def fetchTimetable(client, semester_id: str) -> dict:
     }
 
     try:
-        # --- STEP 1: The Primer Request (Navigate to the menu page) ---
         menu_url = "https://vtop.vitap.ac.in/vtop/academics/common/StudentTimeTable"
-        menu_payload = {
-            "authorizedID": reg_no,
-            "_csrf": token
-        }
+        menu_payload = {"authorizedID": reg_no, "_csrf": token}
         await client._client.post(menu_url, data=menu_payload, headers=headers)
-        
-        # Add a tiny delay to ensure VTOP's backend finishes processing the state change
         await asyncio.sleep(0.2)
 
-        # --- STEP 2: The Data Request (Fetch the actual grid) ---
         data_url = "https://vtop.vitap.ac.in/vtop/processViewTimeTable"
         data_payload = {
             "semesterSubId": semester_id,
@@ -213,7 +192,7 @@ async def fetchTimetable(client, semester_id: str) -> dict:
         
         tables = soup.find_all('table')
         if len(tables) < 2:
-            print(f"   {Fore.RED}[!] Timetable grid is missing from the page. (Found {len(tables)} tables)")
+            print(f"   {Fore.RED}[!] Timetable grid is missing from the page.")
             return {}
 
         classname_code = {}
@@ -221,7 +200,6 @@ async def fetchTimetable(client, semester_id: str) -> dict:
         course_to_class_nbr = {}
         course_to_slot_venue = {}
 
-        # --- FIRST PASS: Extract course names, codes, and faculty from Table 1 ---
         for row in tables[0].find_all('tr'):
             cells = row.find_all('td')
             if len(cells) > 8:
@@ -261,7 +239,6 @@ async def fetchTimetable(client, semester_id: str) -> dict:
                     if faculty_name:
                         faculty_code[class_nbr] = faculty_name
 
-        # --- SECOND PASS: Extract grid timings and slots from Table 2 ---
         raw_slots = []
         timings_temp = []
         count_for_offset = 0
@@ -272,27 +249,23 @@ async def fetchTimetable(client, semester_id: str) -> dict:
             if len(cells) > 6:
                 if count_for_offset % 2 == 0:
                     day = cells[0].get_text(strip=True)
-                    cells = cells[1:]  # Shift cells left
+                    cells = cells[1:]
 
                 for index, val_td in enumerate(cells):
                     val = val_td.get_text(strip=True)
                     
-                    # 0 and 1 extract theory timings
                     if count_for_offset == 0:
                         timings_temp.append({"serial": index, "course_type": "ETH", "start_time": val, "end_time": ""})
                     elif count_for_offset == 1:
                         if index < len(timings_temp):
                             timings_temp[index]["end_time"] = val
                     
-                    # 2 and 3 extract lab timings
                     elif count_for_offset == 2:
                         timings_temp.append({"serial": index, "course_type": "ELA", "start_time": val, "end_time": ""})
                     elif count_for_offset == 3:
-                        # Offset by 22 because 0-21 are theory slots in VTOP's array
                         if (22 + index) < len(timings_temp):
                             timings_temp[22 + index]["end_time"] = val
                     
-                    # Extract the actual class blocks
                     elif count_for_offset > 3:
                         if len(val) > 5 and index != 0:
                             parts = [p.strip() for p in val.split("-") if p.strip()]
@@ -304,7 +277,6 @@ async def fetchTimetable(client, semester_id: str) -> dict:
                                 room_no = raw_parts[3] if len(raw_parts) > 3 else ""
                                 block = " ".join(raw_parts[4:]) if len(raw_parts) > 4 else ""
 
-                                # Resolve Name
                                 course_key = f"{course_code}_{course_type}"
                                 found_name = classname_code.get(course_code, "")
                                 
@@ -323,7 +295,6 @@ async def fetchTimetable(client, semester_id: str) -> dict:
                                 })
             count_for_offset += 1
 
-        # --- MAP TIMINGS TO SLOTS ---
         for slot in raw_slots:
             for t in timings_temp:
                 if t["serial"] == slot["serial"] and (t["course_type"] == slot["course_type"] or slot["course_type"] in t["course_type"]):
@@ -331,7 +302,6 @@ async def fetchTimetable(client, semester_id: str) -> dict:
                     slot["end_time"] = t["end_time"]
                     break
 
-        # --- GROUP CONSECUTIVE SLOTS ---
         grouped_slots = defaultdict(lambda: defaultdict(list))
         for slot in raw_slots:
             course_key = f"{slot['course_code']}_{slot['course_type']}"
@@ -347,9 +317,7 @@ async def fetchTimetable(client, semester_id: str) -> dict:
             for d, slots in day_slots.items():
                 if not slots: continue
                 
-                # Sort by start time
                 slots.sort(key=lambda x: x['start_time'])
-                
                 consecutive_groups = []
                 current_group = []
 
@@ -369,7 +337,6 @@ async def fetchTimetable(client, semester_id: str) -> dict:
                 if current_group:
                     consecutive_groups.append(current_group)
 
-                # Format for the CLI UI
                 full_day_name = day_map.get(d, d)
                 
                 for group in consecutive_groups:
@@ -377,9 +344,7 @@ async def fetchTimetable(client, semester_id: str) -> dict:
                     last = group[-1]
                     slots_combined = "+".join([s['slot'] for s in group])
 
-                    # Check for better slot/venue info from table 1
                     target_key = f"{first['course_code']}_{first['course_type']}"
-                    
                     if target_key in course_to_slot_venue and course_to_slot_venue[target_key][0]:
                         final_slot = course_to_slot_venue[target_key][0]
                         final_venue = course_to_slot_venue[target_key][1]
@@ -391,7 +356,7 @@ async def fetchTimetable(client, semester_id: str) -> dict:
 
                     weekly_timetable[full_day_name].append({
                         "time": f"{first['start_time']} - {last['end_time']}",
-                        "start_time": first['start_time'], # Used for sorting later
+                        "start_time": first['start_time'],
                         "venue": final_venue,
                         "course_code": first['course_code'],
                         "course_type": first['course_type'],
@@ -400,7 +365,6 @@ async def fetchTimetable(client, semester_id: str) -> dict:
                         "faculty": faculty_name
                     })
 
-        # Sort each day by start time
         for day in weekly_timetable:
             weekly_timetable[day].sort(key=lambda x: x['start_time'])
 
@@ -414,8 +378,6 @@ async def get_todays_schedule(client):
     print("\n   [+] Fetching Timetable...")
     try:
         timetable = await client.get_timetable()
-        
-        # [FIXED] Use dt.now() directly (dt is already the datetime class)
         today_name = dt.now().strftime("%A")
         
         print(f"\n   --- SCHEDULE FOR {today_name.upper()} ---")
@@ -423,7 +385,7 @@ async def get_todays_schedule(client):
         if today_name in timetable:
             todays_classes = timetable[today_name]
             if not todays_classes:
-                print("   No classes scheduled for today! 🎉")
+                print("   No classes scheduled for today!")
             else:
                 print(f"   {'Time':<15} {'Code':<10} {'Type':<10} {'Venue':<10}")
                 print("   " + "-" * 50)
@@ -440,7 +402,7 @@ async def fetchProfile(client: VtopClient) -> Dict[str, Any]:
     
     try:
         token = getattr(client, "csrf_token", "")
-        reg_no = getattr(client, "username", getattr(client, "reg_no", a))
+        reg_no = get_auth_id(client)
 
         payload = {
             "verifyMenu": "true",
@@ -460,7 +422,6 @@ async def fetchProfile(client: VtopClient) -> Dict[str, Any]:
             "proctor": {}
         }
         
-        # --- 1. Top Card Labels ---
         labels = soup.find_all('label')
         for i, label in enumerate(labels):
             key = label.get_text(strip=True).upper()
@@ -471,11 +432,9 @@ async def fetchProfile(client: VtopClient) -> Dict[str, Any]:
                 elif "PROGRAM" in key: data["basic"]["program"] = val
                 elif "SCHOOL NAME" in key: data["basic"]["school"] = val
 
-        # --- 2. Name Extraction ---
         name_p = soup.find('p', style=lambda s: s and "font-weight: bold" in s and "text-align: center" in s)
         if name_p: data["basic"]["name"] = name_p.get_text(strip=True)
 
-        # --- 3. Accordion Table Processing ---
         tables = soup.find_all('table')
         for table in tables:
             full_text = table.get_text().lower()
@@ -507,20 +466,18 @@ async def fetchProfile(client: VtopClient) -> Dict[str, Any]:
 async def fetchSemesters(client: VtopClient) -> List[Dict[str, str]]:
     print("   ...Scraping semester list...")
     try:
-        # 1. Get Token from Dashboard
         dash_res = await client._client.get("vtop/content")
         csrf_match = re.search(r'name="_csrf"\s+value="([a-f0-9-]+)"', dash_res.text)
         token = csrf_match.group(1) if csrf_match else getattr(client, "csrf_token", "")
         client.csrf_token = token 
 
-        # 2. Request Timetable Page
         url = "https://vtop.vitap.ac.in/vtop/academics/common/StudentTimeTable"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": "https://vtop.vitap.ac.in/vtop/content"
         }
-        reg_no = getattr(client, "username", getattr(client, "reg_no", a))
+        reg_no = get_auth_id(client)
         payload = {
             "verifyMenu": "true", "authorizedID": reg_no, "_csrf": token,
             "nocache": "@(new Date().getTime())"
@@ -528,7 +485,6 @@ async def fetchSemesters(client: VtopClient) -> List[Dict[str, str]]:
 
         response = await client._client.post(url, data=payload, headers=headers)
         
-        # 3. Parse Options
         pattern = r'<option\s+value="([A-Z0-9]+)"[^>]*>([^<]+)</option>'
         matches = re.findall(pattern, response.text)
         
@@ -553,10 +509,10 @@ async def fetchMarks(client, semesterId: str) -> dict:
     
     try:
         token = getattr(client, "csrf_token", "")
-        reg_no = getattr(client, "username", getattr(client, "reg_no", ""))
+        reg_no = get_auth_id(client)
         
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": "https://vtop.vitap.ac.in/vtop/content"
         }
@@ -568,8 +524,6 @@ async def fetchMarks(client, semesterId: str) -> dict:
         }
 
         response = await client._client.post(url, files=multipart_data, headers=headers)
-        from bs4 import BeautifulSoup
-        import re
         soup = BeautifulSoup(response.text, 'html.parser')
         courses_data = []
         current_course = None
@@ -580,10 +534,8 @@ async def fetchMarks(client, semesterId: str) -> dict:
             cols = row.find_all('td')
             if not cols: continue
             
-            # Column 1 in header is ClassID, Column 2 is Course Code (e.g. STS2008)
             col2_text = cols[2].get_text(strip=True) if len(cols) > 2 else ""
             
-            # If we find a valid Course Code in column 2, it's a new course header
             if re.match(r'^[A-Z]{3,}\d{3,}', col2_text): 
                 if current_course: courses_data.append(current_course)
                 
@@ -595,11 +547,9 @@ async def fetchMarks(client, semesterId: str) -> dict:
                 }
                 continue 
             
-            # If we are inside a course, read the marks rows
             if current_course and len(cols) >= 6: 
                 mark_title = cols[1].get_text(strip=True)
                 
-                # Added "Experiment" to valid_types
                 valid_types = ["CAT", "FAT", "Assignment", "Digital", "Quiz", "Lab", "Project", "Mid-Term", "performance", "Classroom", "Experiment", "Venture"]
                 
                 if any(v.lower() in mark_title.lower() for v in valid_types) and "Total" not in mark_title:
@@ -643,7 +593,7 @@ async def fetchExamSchedule(client, semester_id):
     
     try:
         token = getattr(client, "csrf_token", "")
-        reg_no = getattr(client, "username", "")
+        reg_no = get_auth_id(client)
         
         payload = {
             "semesterSubId": semester_id,
@@ -714,7 +664,7 @@ async def fetchAttendance(client: VtopClient, semesterId: str) -> List[Dict[str,
     url = "https://vtop.vitap.ac.in/vtop/processViewStudentAttendance"
     try:
         token = getattr(client, "csrf_token", "")
-        reg_no = getattr(client, "username", "Unknown")
+        reg_no = get_auth_id(client)
         
         payload = {
             "semesterSubId": semesterId,
@@ -771,15 +721,14 @@ async def fetchAttendanceDetail(client: VtopClient, semesterId: str, courseId: s
     
     try:
         token = getattr(client, "csrf_token", "")
-        reg_no = getattr(client, "username", getattr(client, "reg_no", a))
+        reg_no = get_auth_id(client)
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": "https://vtop.vitap.ac.in/vtop/content"
         }
         
-        # [FIXED] Use time.strftime to avoid dt vs dt.datetime issues
         payload = {
             "_csrf": token,
             "semesterSubId": semesterId,
@@ -805,7 +754,6 @@ async def fetchAttendanceDetail(client: VtopClient, semesterId: str, courseId: s
             
             raw_date = cols[1].get_text(strip=True)
             try:
-                # [FIXED] Use dt.strptime directly (dt is the class)
                 date_obj = dt.strptime(raw_date, "%d-%b-%Y")
                 date_val = date_obj.strftime("%d-%b")
             except:
@@ -826,7 +774,7 @@ async def fetchAttendanceDetail(client: VtopClient, semesterId: str, courseId: s
 async def fetchGradeHistory(client: VtopClient) -> Dict[str, Any]:
     url = "https://vtop.vitap.ac.in/vtop/examinations/examGradeView/StudentGradeHistory"
     try:
-        reg_no = getattr(client, "username", a)
+        reg_no = get_auth_id(client)
         token = getattr(client, "csrf_token", "")
         timestamp = int(time.time() * 1000)
 
@@ -836,7 +784,7 @@ async def fetchGradeHistory(client: VtopClient) -> Dict[str, Any]:
         response = await client._client.post(url, data=payload, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        history = {"courses": [], "summary": {"cgpa": "8.13", "earned": "62.0", "registered": "66.0"}}
+        history = {"courses": [], "summary": {"cgpa": "0.0", "earned": "0.0", "registered": "0.0"}}
         seen_codes = set()
 
         for table in soup.find_all('table'):
@@ -876,7 +824,7 @@ async def fetchCredits(client):
     
     try:
         token = getattr(client, "csrf_token", "")
-        reg_no = getattr(client, "username", "")
+        reg_no = get_auth_id(client)
         
         payload = {
             "registerNumber": reg_no,
@@ -928,13 +876,10 @@ async def fetchCredits(client):
         return []
 
 async def fetchCourseList(client, semester_id):
-    """
-    STEP 1: Fetches the dropdown list of courses for the selected semester.
-    """
     url = "https://vtop.vitap.ac.in/vtop/getCourseForCoursePage"
     
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
     
     payload = {
         "_csrf": token,
@@ -957,16 +902,15 @@ async def fetchCourseList(client, semester_id):
             text = opt.get_text(strip=True)
             if not class_id or "Select" in text: continue
                 
-            # [FIX] Capture the Course Type from the end of the string
             parts = text.split(' - ')
             code = parts[0].strip()
             title = parts[1].strip() if len(parts) > 1 else text
-            c_type = parts[-1].strip() if len(parts) > 2 else "TH" # Default to TH if not present
+            c_type = parts[-1].strip() if len(parts) > 2 else "TH" 
             
             courses.append({
                 "code": code,
                 "title": title,
-                "type": c_type,  # <--- Added Course Type
+                "type": c_type,
                 "generic_class_id": class_id, 
                 "full_text": text
             })
@@ -976,14 +920,10 @@ async def fetchCourseList(client, semester_id):
         return []
 
 async def fetchCourseClasses(client, semester_id, generic_class_id):
-    """
-    STEP 2: Fetches the specific classes/slots for a selected course.
-    Extracts the erpId (Faculty ID) and specific classId needed for Step 3.
-    """
     url = "https://vtop.vitap.ac.in/vtop/getSlotIdForCoursePage"
     
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
 
     payload = {
         "_csrf": token,
@@ -1002,30 +942,24 @@ async def fetchCourseClasses(client, semester_id, generic_class_id):
         soup = BeautifulSoup(response.text, 'html.parser')
         
         classes = []
-        # Usually inside a table
         table = soup.find('table')
         if not table: return []
 
-        rows = table.find_all('tr')[1:] # Skip header
+        rows = table.find_all('tr')[1:]
         for row in rows:
             cols = row.find_all('td')
             if len(cols) >= 9:
-                # Columns: Sl.No | ClassGroup | Code | Title | Type | ClassId | Slot | Faculty | Action
                 c_type = cols[4].get_text(strip=True)
                 specific_class_id = cols[5].get_text(strip=True)
                 slot = cols[6].get_text(strip=True)
                 faculty = cols[7].get_text(strip=True)
                 
-                # Extract erpId from the Action button/row HTML
-                # VTOP usually embeds it in an onclick function like: onclick="view('AP2025...','70401','...')"
                 row_html = str(row)
                 erp_id = ""
-                # Look for a standalone 4-6 digit faculty number in the raw HTML of the button/cell
                 match = re.search(r"'(\d{4,6})'", row_html) 
                 if match:
                     erp_id = match.group(1)
                 else:
-                    # Fallback: Check faculty text string
                     f_match = re.search(r"(\d{4,6})", faculty)
                     if f_match: erp_id = f_match.group(1)
 
@@ -1042,10 +976,6 @@ async def fetchCourseClasses(client, semester_id, generic_class_id):
         return []
 
 async def fetchCoursePage(client, semester_id, class_id, erp_id):
-    """
-    STEP 3: Fetches the actual Course Materials page.
-    Upgraded to catch multiple Reference Materials and Web Links per lecture.
-    """
     import time
     import re
     from bs4 import BeautifulSoup
@@ -1053,7 +983,7 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
     url = "https://vtop.vitap.ac.in/vtop/processViewStudentCourseDetail"
     
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
     
     payload = {
         "_csrf": token,
@@ -1076,7 +1006,6 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
 
         data = { "metadata": {}, "general": [], "lectures": [] }
 
-        # --- 1. PARSE METADATA ---
         meta_table = None
         for table in soup.find_all('table'):
             if "Class Group" in table.get_text():
@@ -1096,7 +1025,6 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
                         "faculty": cols[6].get_text(strip=True)
                     }
 
-        # --- 2. PARSE GENERAL MATERIALS & LECTURES ---
         for tr in soup.find_all('tr'):
             cols = tr.find_all('td')
             if not cols: continue
@@ -1110,7 +1038,6 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
 
             first_col_text = cols[0].get_text(strip=True)
 
-            # Parse General Materials (Syllabus, etc.)
             if "Syllabus" in first_col_text or "Reference Material" in first_col_text:
                 if len(cols) >= 2:
                     link = get_link(cols[1])
@@ -1119,7 +1046,6 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
                         if not file_name: file_name = first_col_text
                         data["general"].append({"title": file_name, "download_path": link})
 
-            # Parse Specific Lectures
             elif first_col_text.isdigit() and len(cols) >= 5:
                 s_no = int(first_col_text)
                 raw_date = cols[1].get_text(strip=True)
@@ -1132,25 +1058,21 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
                 ref_paths = []
                 web_links = []
 
-                # Sweep all links in the materials column (index 4)
                 for a in cols[4].find_all('a'):
                     href = a.get('href', '')
                     link_text = a.get_text(strip=True).upper()
                     
-                    # Catch VTOP Download Links
                     if 'javascript:vtopDownload' in href:
                         match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", href)
                         if match:
                             path = match.group(1)
-                            # Check if explicitly labeled as Reference
                             if "REFERENCE" in link_text or "REF" in link_text:
                                 ref_paths.append(path)
                             elif not main_path:
-                                main_path = path # Treat first non-reference as Main
+                                main_path = path 
                             else:
-                                ref_paths.append(path) # Fallback
+                                ref_paths.append(path) 
                                 
-                    # Catch Web URLs (YouTube, Articles, etc.)
                     elif href.startswith('http'):
                         web_links.append(href)
 
@@ -1170,23 +1092,17 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
         return {"metadata": {}, "general": [], "lectures": []}
 
 async def download_course_material(client, url_suffix, folder_path, base_filename):
-    """
-    Ultimate Course Material Downloader.
-    Defeats VTOP's hidden HTML redirects by aggressively checking multiple 
-    endpoint paths and HTTP methods until it successfully extracts the raw binary file.
-    """
     import os, re
     
     clean_path = url_suffix.lstrip('/')
     
-    # VTOP maps downloads differently depending on the module. We will test both.
     test_urls = [
         f"https://vtop.vitap.ac.in/vtop/{clean_path}",
         f"https://vtop.vitap.ac.in/vtop/academics/common/{clean_path}"
     ]
     
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
     
     payload = {
         "authorizedID": reg_no,
@@ -1199,7 +1115,6 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    # Try POST first, then GET for both URLs
     strategies = []
     for url in test_urls:
         strategies.append(("POST", url))
@@ -1215,13 +1130,9 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
             if response.status_code == 200:
                 content = response.content
                 
-                # [THE SHIELD] - If the file is too small or contains HTML (like the Dashboard), throw it away!
                 if len(content) < 100 or b"<html" in content[:100].lower() or b"page-holder" in content[:500].lower():
-                    continue # Try the next method/URL
+                    continue 
                     
-                # --- IF WE REACH HERE, IT IS A 100% REAL FILE ---
-                
-                # Find extension via headers (if provided)
                 ext = ".pdf"
                 cd = response.headers.get("Content-Disposition", "")
                 if "filename=" in cd:
@@ -1230,7 +1141,6 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
                         parsed_ext = os.path.splitext(match.group(1))[1].lower()
                         if parsed_ext: ext = parsed_ext
                         
-                # Magic Bytes (The absolute truth, overrides lying headers)
                 magic = content[:4]
                 if magic.startswith(b'%PDF'): ext = ".pdf"
                 elif magic.startswith(b'PK\x03\x04'):
@@ -1240,7 +1150,6 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
                 elif magic.startswith(b'\x89PNG'): ext = ".png"
                 elif content[:3] == b'\xff\xd8\xff': ext = ".jpg"
                 
-                # Save the file
                 os.makedirs(folder_path, exist_ok=True)
                 safe_filename = re.sub(r'[\\/*?:"<>|]', "", base_filename).strip()
                 if not safe_filename: safe_filename = "downloaded_material"
@@ -1253,7 +1162,7 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
                 return True, final_path
                 
         except Exception:
-            pass # Suppress network crashes and try the next strategy
+            pass
 
     return False, "Failed: VTOP blocked the request or the file no longer exists."
 
@@ -1261,7 +1170,7 @@ async def fetchGeneralOuting(client):
     url = "https://vtop.vitap.ac.in/vtop/hostel/StudentGeneralOuting"
     
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
     
     payload = {
         "verifyMenu": "true",
@@ -1277,7 +1186,6 @@ async def fetchGeneralOuting(client):
 
         if "Login" in response.text: return None
 
-        # 1. Scrape Info
         info = {}
         def get_val(name):
             inp = soup.find('input', {'name': name})
@@ -1288,7 +1196,6 @@ async def fetchGeneralOuting(client):
         info['roomNo'] = get_val('roomNo')
         info['mobileNo'] = get_val('mobileNo')
 
-        # 2. Scrape History
         history = []
         table = soup.find('table', {'id': 'BookingRequests'})
         
@@ -1299,7 +1206,6 @@ async def fetchGeneralOuting(client):
                 if len(cols) >= 10:
                     raw_out = cols[4].get_text(strip=True)
                     try:
-                        # [FIXED] Use dt directly
                         sort_obj = dt.strptime(raw_out.split('.')[0], "%Y-%m-%d %H:%M:%S")
                         out_d_str = sort_obj.strftime("%d-%b-%Y")
                         out_t_str = cols[5].get_text(strip=True)
@@ -1351,7 +1257,7 @@ async def download_g_outpass(client, url_suffix, filename):
     url = f"https://vtop.vitap.ac.in/{clean_path}"
     
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
     
     payload = {
         "authorizedID": reg_no,
@@ -1382,7 +1288,7 @@ async def submitGeneralOuting(client, meta_info, place, purpose, out_date, out_t
     url = "https://vtop.vitap.ac.in/vtop/hostel/saveGeneralOutingForm"
     
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
     
     try:
         oh, om = out_time.split(':')
@@ -1438,7 +1344,7 @@ async def submitGeneralOuting(client, meta_info, place, purpose, out_date, out_t
 async def deleteGeneralOuting(client, booking_id):
     url = "https://vtop.vitap.ac.in/vtop/hostel/deleteGeneralOutingInfo"
     token = getattr(client, "csrf_token", "")
-    reg_no = getattr(client, "username", "")
+    reg_no = get_auth_id(client)
     
     payload = {
         "_csrf": token,
@@ -1456,11 +1362,10 @@ async def deleteGeneralOuting(client, booking_id):
         return False, str(e)
 
 async def fetchWeekendOuting(client):
-    """Fetches Weekend Outing eligibility, user info, and history with correct keys."""
     url = "https://vtop.vitap.ac.in/vtop/hostel/StudentWeekendOuting"
     
     try:
-        reg_no = getattr(client, "username", "")
+        reg_no = get_auth_id(client)
         payload = {"authorizedID": reg_no, "_csrf": getattr(client, "csrf_token", "")}
         headers = {"X-Requested-With": "XMLHttpRequest", "Referer": "https://vtop.vitap.ac.in/vtop/content"}
         
@@ -1469,13 +1374,11 @@ async def fetchWeekendOuting(client):
             
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # 1. Eligibility Check
         can_apply = True
         json_bom = soup.find('input', {'id': 'jsonBom'})
         if json_bom and json_bom.get('value'):
             can_apply = False
             
-        # 2. History Parsing
         history = []
         info = {'name': reg_no, 'hostelBlock': 'N/A', 'roomNo': 'N/A'}
         
@@ -1488,22 +1391,18 @@ async def fetchWeekendOuting(client):
                         info['hostelBlock'] = cols[2].get_text(strip=True)
                         info['roomNo'] = cols[3].get_text(strip=True)
                         
-                   # Extract Booking ID for deletion using the exact "W-Number" pattern
                     action_html = str(cols[8])
                     booking_id = None
                     
-                    # 1. Try to grab it from standard HTML attributes
                     delete_btn = cols[8].find('button') or cols[8].find('a')
                     if delete_btn:
                         booking_id = delete_btn.get('data-bookingid') or delete_btn.get('data-booking-id')
                         
-                    # 2. If it's buried in a JS function, hunt specifically for W + 8 or more digits
                     if not booking_id:
                         b_match = re.search(r"(W\d{8,})", action_html)
                         if b_match: 
                             booking_id = b_match.group(1)
                             
-                    # Extract Outpass Download Link
                     download_link = None
                     btn = cols[10].find('a', {'data-leave-url': True})
                     if btn: download_link = btn['data-leave-url']
@@ -1527,11 +1426,10 @@ async def fetchWeekendOuting(client):
         return None
 
 async def deleteWeekendOuting(client, booking_id):
-    """Deletes a pending weekend outing request."""
     url = "https://vtop.vitap.ac.in/vtop/hostel/deleteBookingInfo"
     payload = {
         "BookingId": booking_id,
-        "authorizedID": getattr(client, "username", ""),
+        "authorizedID": get_auth_id(client),
         "_csrf": getattr(client, "csrf_token", ""),
         "x": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
     }
@@ -1547,9 +1445,8 @@ async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contac
     from bs4 import BeautifulSoup
     
     try:
-        # --- 1. THE PRE-SCRAPER: Fetch the form to get the hidden user data ---
         form_url = "https://vtop.vitap.ac.in/vtop/hostel/StudentWeekendOuting"
-        current_user = getattr(client, "username", "")
+        current_user = get_auth_id(client)
         csrf = getattr(client, "csrf_token", "")
         
         headers_form = {
@@ -1557,7 +1454,6 @@ async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contac
             "Referer": "https://vtop.vitap.ac.in/vtop/content"
         }
         
-        # Ping the page to load the HTML form
         form_res = await client._client.post(
             form_url, 
             data={"authorizedID": current_user, "_csrf": csrf}, 
@@ -1565,12 +1461,10 @@ async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contac
         )
         soup = BeautifulSoup(form_res.text, 'html.parser')
 
-        # Helper function to dig out the hidden <input> values
         def get_val(field_name):
             elem = soup.find('input', {'id': field_name}) or soup.find('input', {'name': field_name})
             return elem.get('value', '') if elem else ''
 
-        # Build the dynamic dictionary for whoever is currently logged in
         profile_data = {
             "name": get_val("name"),
             "applicationNo": get_val("applicationNo"),
@@ -1580,11 +1474,9 @@ async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contac
             "parentContactNumber": get_val("parentContactNumber")
         }
 
-        # Security check: If VTOP didn't give us an Application No, the form is broken or blocked
         if not profile_data.get("applicationNo"):
             return False, "Failed to scrape hidden profile data from VTOP. (Are you eligible for an outing?)"
             
-        # --- 2. THE DYNAMIC PAYLOAD ---
         submit_url = "https://vtop.vitap.ac.in/vtop/hostel/saveOutingForm"
         
         headers_submit = {
@@ -1594,7 +1486,6 @@ async def submitWeekendOuting(client, info, place, purpose, out_d, out_t, contac
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
-        # Injecting the dynamic variables so anyone can use it
         multipart_payload = {
             "authorizedID": (None, current_user),
             "BookingId": (None, ""), 
@@ -1647,13 +1538,13 @@ async def download_w_outpass(client, url_suffix, folder_path, base_filename):
     url = f"https://vtop.vitap.ac.in/{clean_path}"
     
     payload = {
-        "authorizedID": getattr(client, "username", ""),
+        "authorizedID": get_auth_id(client),
         "_csrf": getattr(client, "csrf_token", "")
     }
     
     headers = { 
         "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": "https://vtop.vitap.ac.in/vtop/hostel/StudentWeekendOuting", # Specific Referer
+        "Referer": "https://vtop.vitap.ac.in/vtop/hostel/StudentWeekendOuting",
         "Origin": "https://vtop.vitap.ac.in",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
@@ -1664,7 +1555,6 @@ async def download_w_outpass(client, url_suffix, folder_path, base_filename):
         if response.status_code == 200:
             content = response.content
             
-            # Check if VTOP sent the actual PDF or just redirected to the dashboard
             if b"%PDF" in content[:100]:
                 os.makedirs(folder_path, exist_ok=True)
                 final_path = os.path.join(folder_path, f"{base_filename}.pdf")
@@ -1680,14 +1570,13 @@ async def download_w_outpass(client, url_suffix, folder_path, base_filename):
         return False, str(e)
 
 async def fetchDACourseList(client, sem_id):
-    """Fetches the list of courses that have Digital Assignments for a given semester."""
     from bs4 import BeautifulSoup
     import time
     
     url = "https://vtop.vitap.ac.in/vtop/examinations/doDigitalAssignment"
     payload = {
         "semesterSubId": sem_id,
-        "authorizedID": getattr(client, "username", ""),
+        "authorizedID": get_auth_id(client),
         "_csrf": getattr(client, "csrf_token", ""),
         "x": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
     }
@@ -1700,7 +1589,7 @@ async def fetchDACourseList(client, sem_id):
         
         table = soup.find('table', class_='customTable')
         if table:
-            for row in table.find_all('tr')[1:]:  # Skip header
+            for row in table.find_all('tr')[1:]:
                 cols = row.find_all('td')
                 if len(cols) >= 6:
                     courses.append({
@@ -1716,14 +1605,13 @@ async def fetchDACourseList(client, sem_id):
         return []
 
 async def fetchDADetails(client, class_id):
-    """Fetches assignments, deadlines, statuses, and download IDs for a specific course."""
     from bs4 import BeautifulSoup
     import time, re
     
     url = "https://vtop.vitap.ac.in/vtop/examinations/processDigitalAssignment"
     payload = {
         "classId": class_id,
-        "authorizedID": getattr(client, "username", ""),
+        "authorizedID": get_auth_id(client),
         "_csrf": getattr(client, "csrf_token", ""),
         "x": time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
     }
@@ -1739,21 +1627,17 @@ async def fetchDADetails(client, class_id):
         if len(tables) > 1:
             for row in tables[1].find_all('tr'):
                 cols = row.find_all('td')
-                # Check if row is a valid assignment row (starts with a digit)
                 if len(cols) >= 9 and cols[0].get_text(strip=True).isdigit():
                     
                     qp_id, da_id = None, None
                     
-                    # Column 5: Question Paper Download Link
                     qp_a = cols[5].find('a')
                     if qp_a and 'href' in qp_a.attrs:
                         match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", qp_a['href'])
                         if match: qp_id = match.group(1)
                             
-                    # Column 6: Submission Status (Used for State logic)
                     submission_status = cols[6].get_text(strip=True)
                         
-                    # Column 8: Student Uploaded DA Download Link
                     sub_a = cols[8].find('a')
                     if sub_a and 'href' in sub_a.attrs:
                         match = re.search(r"vtopDownload\((?:'|&#39;)(.*?)(?:'|&#39;)\)", sub_a['href'])
@@ -1775,7 +1659,6 @@ async def fetchDADetails(client, class_id):
     except Exception as e:
         print(f"   [!] Error fetching DA details: {e}")
         return []
-
 
 def generate_da_report(da_data):
     from colorama import Fore, Style
@@ -1841,12 +1724,10 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
 
     max_bunk_date = max(valid_dates)
     
-    # --- 0. SEMESTER BOUNDARY CHECK ---
     sem_end_dt = dt_obj(max_bunk_date.year, 5, 19)
     if max_bunk_date > sem_end_dt:
         return f"\n   {Fore.RED}[!] HALT: The semester officially ends on 19-05.\n   [!] You cannot simulate attendance beyond this date.\n"
 
-    # 1. Clean holidays
     clean_blocked = {}
     for k, v in blocked_dates.items():
         try:
@@ -1862,7 +1743,6 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
     original_data = {}
     classes_missed = 0
 
-    # 2. THE FULL TIMELINE PROJECTOR
     for att in attendance_data:
         key = att['course_code'] + att['type_code']
         exact_date = att.get('exact_last_date')
@@ -1925,7 +1805,6 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
             
             curr_dt += timedelta(days=1)
 
-    # 3. GENERATE SUBJECT-WISE REPORT
     result_msg = f"\n   {Fore.CYAN}" + "="*55 + "\n"
     result_msg += f"   {PEACH}{Style.BRIGHT}SUBJECT-WISE BUNK CALCULATION\n"
     result_msg += f"   {Fore.CYAN}" + "="*55 + f"\n\n{Fore.WHITE}"
@@ -1971,7 +1850,6 @@ async def open_vtop_browser(client):
     import json
     from colorama import Fore
 
-    # --- 1. EXTRACT LIVE SESSION COOKIES FROM THE HTTPX CLIENT ---
     vtop_cookies = []
     try:
         for cookie in client._client.cookies.jar:
@@ -1992,7 +1870,6 @@ async def open_vtop_browser(client):
         print(f"   {Fore.RED}[x] No cookies found in session. Are you logged in?")
         return
 
-    # Write cookies to a temp file so the subprocess can read them
     temp_dir = tempfile.gettempdir()
     cookies_file = os.path.join(temp_dir, "vtop_session_cookies.json")
     runner_file  = os.path.join(temp_dir, "vtop_browser_login.py")
@@ -2003,9 +1880,6 @@ async def open_vtop_browser(client):
 
     print(f"   {Fore.CYAN}[.] Session cookies extracted ({len(vtop_cookies)} cookies). Launching browser...")
 
-    # --- 2. THE BROWSER RUNNER SCRIPT ---
-    # This runs in a separate process. It opens Chrome, injects the CLI's cookies,
-    # then navigates directly to the VTOP dashboard — no login form, no CAPTCHA.
     runner_code = f'''# -*- coding: utf-8 -*-
 import asyncio
 import json
@@ -2026,7 +1900,6 @@ async def run():
         cookies = json.load(f)
 
     async with async_playwright() as p:
-        # Use a FRESH temp profile so it never conflicts with any existing Chrome
         user_data_dir = os.path.join(
             os.environ.get("TEMP", os.path.expanduser("~")),
             "vtop_browser_session"
@@ -2036,23 +1909,19 @@ async def run():
         try:
             context = await p.chromium.launch_persistent_context(
                 user_data_dir,
-                channel="chrome",       # Uses real Chrome; falls back gracefully
+                channel="chrome",       
                 headless=False,
                 args=["--start-maximized"],
                 viewport=None,
-                ignore_https_errors=True  # Mirrors the CLI's SSL bypass
+                ignore_https_errors=True  
             )
         except Exception:
-            # Fallback: use bundled Chromium if real Chrome isn't available
             browser = await p.chromium.launch(headless=False, args=["--start-maximized"])
             context = await browser.new_context(
                 viewport=None,
                 ignore_https_errors=True
             )
 
-        # --- INJECT THE CLI'S LIVE SESSION COOKIES ---
-        # This is the key step: browser inherits the authenticated session
-        # from the CLI without touching the login form at all.
         try:
             await context.add_cookies(cookies)
             print(f"[+] Injected {{len(cookies)}} session cookies.", flush=True)
@@ -2061,14 +1930,12 @@ async def run():
 
         page = await context.new_page()
 
-        # Navigate directly to dashboard — should land logged in
         print("[.] Opening VTOP dashboard...", flush=True)
         try:
             await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
         except Exception as e:
             print(f"[x] Navigation failed: {{e}}", flush=True)
 
-        # Verify we actually landed on the dashboard and not the login page
         try:
             await page.wait_for_selector("#vtopLink, .navbar, #quickLinkModalCenter", timeout=8000)
             print("[+] Dashboard loaded. Session is live.", flush=True)
@@ -2076,7 +1943,6 @@ async def run():
             current = page.url
             if "vtopLoginForm" in current or "login" in current.lower():
                 print("[!] Session expired or cookies rejected. Falling back to manual login...", flush=True)
-                # Graceful fallback: load the login page and let user handle it
                 try:
                     await page.goto("https://vtop.vitap.ac.in/vtop/", wait_until="domcontentloaded")
                     await page.wait_for_selector("#username", timeout=10000)
@@ -2092,7 +1958,6 @@ async def run():
             else:
                 print(f"[.] Loaded: {{current}}", flush=True)
 
-        # Keep alive until user closes the browser
         print("[.] Browser is open. Close it to exit.", flush=True)
         try:
             while True:
@@ -2117,7 +1982,6 @@ asyncio.run(run())
             stderr=subprocess.STDOUT,
             cwd=temp_dir
         )
-        #print(f"   {Fore.GREEN}[+] Browser launched (PID: {proc.pid})")
         print(f"   {Fore.GREEN}[+] VTOP session launched — no login needed.")
         print(f"   {Fore.CYAN}[i] Log: {log_file}")
     except Exception as e:
