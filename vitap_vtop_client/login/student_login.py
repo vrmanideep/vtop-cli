@@ -83,9 +83,18 @@ async def student_login(
             else:
                 otp_csrf = csrf_token
 
-            # Safely prompt the user for the OTP without blocking the async event loop
-            otp_code = await asyncio.to_thread(input, "   [>] Enter the 6-digit OTP: ")
+            # --- GMAIL AUTOFILL INJECTION ---
+            from vitap_vtop_client.gmail_otp import wait_for_vtop_otp
+            
+            # Attempt to auto-fetch from Gmail
+            otp_code = await wait_for_vtop_otp(timeout_seconds=45)
+            
+            # Fallback to manual input if the Gmail API fails or times out
+            if not otp_code:
+                otp_code = await asyncio.to_thread(input, "   [>] Auto-fetch failed. Manually enter the 6-digit OTP: ")
+                
             otp_code = otp_code.strip()
+            # --------------------------------
 
             # Submit the OTP
             otp_url = f"{VTOP_BASE_URL}/vtop/validateSecurityOtp"
