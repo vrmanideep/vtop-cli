@@ -51,7 +51,7 @@ from vitap_vtop_client.client import VtopClient
 from services import *
 
 # --- Configuration ---
-CURRENT_VERSION = "5.2.0"
+CURRENT_VERSION = "5.2.1"
 
 def check_for_updates():
     import urllib.request
