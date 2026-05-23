@@ -14,13 +14,13 @@ A fast, asynchronous command-line interface for the VIT-AP Student Portal (VTOP)
 
 ### 1. Clone the Repository 
 ```bash
-git clone [https://github.com/vrmanideep/vtop.git](https://github.com/vrmanideep/vtop.git)
+git clone [https://github.com/vrmanideep/vtop.git](https://github.com/vrmanideep/vtop-cli.git)
 cd vtop
 ```
 Or Download and extract the zip file
 **(Note: Clicking this link will start downloading the .zip folder)**
 ```bash
-https://github.com/vrmanideep/vtop/archive/refs/heads/main.zip
+https://github.com/vrmanideep/vtop-cli/archive/refs/heads/main.zip
 cd vtop-main
 ```
 

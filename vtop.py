@@ -62,7 +62,7 @@ def check_for_updates():
     import zipfile  
     import io       
 
-    API_URL = "https://api.github.com/repos/vrmanideep/vtop/releases/latest"
+    API_URL = "https://api.github.com/repos/vrmanideep/vtop-cli/releases/latest"
     print(f"   {Fore.CYAN}[.] Checking for updates...", end="\r") 
     
     try:
