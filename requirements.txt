@@ -1,4 +1,3 @@
-
 httpx
 beautifulsoup4
 lxml
@@ -6,13 +5,17 @@ requests
 
 rich
 colorama
+pwinput
 
 pydantic
 
 pillow
 numpy
-pwinput
 
 setuptools
 wheel
 playwright>=1.40.0
+
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

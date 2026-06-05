@@ -1020,49 +1020,21 @@ async def main():
                                         return f"{parts[0]}-{parts[1]}" if len(parts) >= 2 else date_str
 
                                     if dl_choice == 'A':
-                                        count = 0
-                                        skipped = 0
-                                        print(f"   {Fore.CYAN}[.] Saving files directly to: {save_dir}")
+                                        print(f"   {Fore.CYAN}[.] Requesting ZIP bundle from VTOP servers...")
                                         
-                                        for lec in c_page['lectures']:
-                                            short_date = get_short_date(lec.get('date', ''))
-                                            safe_topic = re.sub(r'[\\/*?:"<>|]', "", lec['topic']).strip()
-                                            
-                                            if lec.get('download_path'):
-                                                fname = f"{short_date}_{selected_code}_{safe_topic}"
-                                                if check_exists(fname):
-                                                    print(f"   {PEACH}[-] Skipped (Exists): {fname[:60]}...")
-                                                    skipped += 1
-                                                else:
-                                                    res, _ = await download_course_material(client, lec['download_path'], save_dir, fname)
-                                                    if res: count += 1
-                                            
-                                            for r_idx, r_path in enumerate(lec.get('ref_paths', [])):
-                                                fname = f"{short_date}_{selected_code}_{safe_topic}_Ref_{r_idx+1}"
-                                                if check_exists(fname):
-                                                    print(f"   {PEACH}[-] Skipped (Exists): {fname[:60]}...")
-                                                    skipped += 1
-                                                else:
-                                                    res, _ = await download_course_material(client, r_path, save_dir, fname)
-                                                    if res: count += 1
-                                            
-                                            if lec.get('web_links'):
-                                                print(f"\n   {Fore.BLUE}[LINK] Web Links for: {lec['topic'][:50]}...")
-                                                for link in lec['web_links']:
-                                                    print(f"        -> {link}")
-                                                print("") 
-                                                
-                                        for i, gen in enumerate(c_page.get('general', [])):
-                                            fname = format_general_name(selected_code, gen['title'], i+1)
-                                            if check_exists(fname):
-                                                print(f"   {PEACH}[-] Skipped (Exists): {fname[:60]}...")
-                                                skipped += 1
+                                        # Use VTOP's native ZIP compilation endpoint
+                                        url_suffix = f"academics/common/allCourseMeterialDownload/1/1/{target_sem}/{selected_class['class_id']}"
+                                        fname = f"{selected_code}_All_Materials"
+                                        
+                                        if check_exists(fname):
+                                            print(f"   {PEACH}[-] ZIP file already exists: {fname}")
+                                        else:
+                                            res, filepath = await download_course_material(client, url_suffix, save_dir, fname)
+                                            if res:
+                                                print(f"   {Fore.GREEN}[✓] Downloaded ZIP bundle to: {filepath}")
                                             else:
-                                                res, _ = await download_course_material(client, gen['download_path'], save_dir, fname)
-                                                if res: count += 1
-                                        
-                                        print(f"   {Fore.GREEN}[✓] Downloaded {count} new files. (Skipped {skipped})")
-                                                
+                                                print(f"   {Fore.RED}[x] Failed to download ZIP bundle.")
+
                                     elif dl_choice.startswith('G'):
                                         try:
                                             g_idx = int(dl_choice[1:]) - 1

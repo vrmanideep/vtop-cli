@@ -1093,6 +1093,7 @@ async def fetchCoursePage(client, semester_id, class_id, erp_id):
 
 async def download_course_material(client, url_suffix, folder_path, base_filename):
     import os, re
+    from rich.progress import Progress, TextColumn, BarColumn, DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
     
     clean_path = url_suffix.lstrip('/')
     
@@ -1115,22 +1116,30 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    strategies = []
-    for url in test_urls:
-        strategies.append(("POST", url))
-        strategies.append(("GET", url))
+    strategies = [
+        ("POST", test_urls[0]), ("GET", test_urls[0]),
+        ("POST", test_urls[1]), ("GET", test_urls[1])
+    ]
 
     for method, target_url in strategies:
         try:
-            if method == "POST":
-                response = await client._client.post(target_url, data=payload, headers=headers, follow_redirects=True)
-            else:
-                response = await client._client.get(target_url, params=payload, headers=headers, follow_redirects=True)
-                
-            if response.status_code == 200:
-                content = response.content
-                
-                if len(content) < 100 or b"<html" in content[:100].lower() or b"page-holder" in content[:500].lower():
+            kwargs = {"headers": headers, "follow_redirects": True}
+            if method == "POST": kwargs["data"] = payload
+            else: kwargs["params"] = payload
+
+            # Stream the download so we don't freeze memory on large ZIP files
+            async with client._client.stream(method, target_url, **kwargs) as response:
+                if response.status_code != 200:
+                    continue
+                    
+                # Grab the first chunk to inspect file headers
+                iterator = response.aiter_bytes(8192)
+                try:
+                    first_chunk = await iterator.__anext__()
+                except StopAsyncIteration:
+                    continue
+                    
+                if len(first_chunk) < 100 or b"<html" in first_chunk[:100].lower() or b"page-holder" in first_chunk[:500].lower():
                     continue 
                     
                 ext = ".pdf"
@@ -1141,14 +1150,14 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
                         parsed_ext = os.path.splitext(match.group(1))[1].lower()
                         if parsed_ext: ext = parsed_ext
                         
-                magic = content[:4]
+                magic = first_chunk[:4]
                 if magic.startswith(b'%PDF'): ext = ".pdf"
                 elif magic.startswith(b'PK\x03\x04'):
-                    if ext not in [".docx", ".pptx", ".xlsx", ".zip"]: ext = ".docx"
+                    if ext not in [".docx", ".pptx", ".xlsx", ".zip"]: ext = ".zip" # Default to ZIP for archives
                 elif magic.startswith(b'\xd0\xcf\x11\xe0'):
                     if ext not in [".doc", ".ppt", ".xls"]: ext = ".doc"
                 elif magic.startswith(b'\x89PNG'): ext = ".png"
-                elif content[:3] == b'\xff\xd8\xff': ext = ".jpg"
+                elif first_chunk[:3] == b'\xff\xd8\xff': ext = ".jpg"
                 
                 os.makedirs(folder_path, exist_ok=True)
                 safe_filename = re.sub(r'[\\/*?:"<>|]', "", base_filename).strip()
@@ -1156,9 +1165,28 @@ async def download_course_material(client, url_suffix, folder_path, base_filenam
                 
                 final_path = os.path.join(folder_path, f"{safe_filename}{ext}")
                 
-                with open(final_path, 'wb') as f:
-                    f.write(content)
+                total_size = int(response.headers.get("Content-Length", 0))
+                
+                # Live Progress Bar Setup
+                with Progress(
+                    TextColumn("   [cyan]{task.description}"),
+                    BarColumn(complete_style="green"),
+                    DownloadColumn(),
+                    TransferSpeedColumn(),
+                    TimeRemainingColumn(),
+                    transient=True # Hides the bar when finished
+                ) as progress:
+                    desc = safe_filename[:25] + ".." if len(safe_filename) > 25 else safe_filename
+                    task_id = progress.add_task(desc, total=total_size or None)
                     
+                    with open(final_path, 'wb') as f:
+                        f.write(first_chunk)
+                        if total_size: progress.update(task_id, advance=len(first_chunk))
+                        
+                        async for chunk in iterator:
+                            f.write(chunk)
+                            if total_size: progress.update(task_id, advance=len(chunk))
+                            
                 return True, final_path
                 
         except Exception:
@@ -1930,6 +1958,30 @@ async def run():
 
         page = await context.new_page()
 
+        # --- FIX: HANDLE DOWNLOADS PROPERLY ---
+        async def handle_download(download):
+            try:
+                # Route downloads to your actual Windows Downloads folder
+                downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads", "VTOP_Browser_Downloads")
+                os.makedirs(downloads_dir, exist_ok=True)
+                
+                # Extract the real file name (e.g., Syllabus.pdf)
+                filename = download.suggested_filename
+                final_path = os.path.join(downloads_dir, filename)
+                
+                # Notice the DOUBLE curly braces here!
+                print(f"\\n[.] Downloading: {{filename}}...", flush=True)
+                await download.save_as(final_path)
+                print(f"[+] Saved to: {{final_path}}", flush=True)
+            except Exception as e:
+                print(f"\\n[x] Download error: {{e}}", flush=True)
+
+        # Attach download listener to the main page
+        page.on("download", handle_download)
+        
+        # Attach download listener to any new tabs the user opens (like when viewing outpasses)
+        context.on("page", lambda new_page: new_page.on("download", handle_download))
+        # --------------------------------------
         print("[.] Opening VTOP dashboard...", flush=True)
         try:
             await page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
