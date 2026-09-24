@@ -118,47 +118,13 @@ def check_for_updates():
     except Exception:
         print(" " * 50, end="\r")
 
-def get_cred(file_path="credentials.txt"):
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            lines = [line.strip() for line in f.readlines() if line.strip()]
-            if len(lines) >= 2:
-                return lines[0], lines[1]
-            else:
-                print(f"\n   {Fore.RED}[!] {file_path} is corrupted (needs 2 lines). Let's fix it.")
-
-    print(f"\n   {PEACH}=======================================")
-    print(f"   {PEACH}[ FIRST TIME SETUP: VTOP CLI ]")
-    print(f"   {PEACH}=======================================")
-    print(f"   {Fore.WHITE}Let's set up your {file_path} file securely.\n")
-    
-    while True:
-        username = input(f"   {PEACH}[>] Enter Login ID (Reg No, App No, or Email): {Fore.WHITE}").strip()
-        if '@' not in username:
-            username = username.upper()
-            
-        password = pwinput.pwinput(prompt=f"   {PEACH}[>] Enter VTOP Password: {Fore.WHITE}", mask="*").strip()
-        
-        if not username or not password:
-            print(f"   {Fore.RED}[!] Fields cannot be empty. Try again.\n")
-            continue
-
-        print(f"\n   {Fore.CYAN}--- Verify Your Details ---")
-        print(f"   {Fore.WHITE}Login ID: {username}")
-        print(f"   {Fore.WHITE}Password: {'*' * len(password)}")
-        
-        confirm = input(f"\n   {PEACH}Save these credentials and login? (y/n): {Fore.WHITE}").strip().lower()
-        
-        if confirm == 'y':
-            with open(file_path, "w") as f:
-                f.write(f"{username}\n{password}\n")
-            print(f"   {Fore.GREEN}[✓] {file_path} created successfully!\n")
-            return username, password
-        else:
-            print(f"   {Fore.RED}[!] Setup cancelled. Let's try typing that again.\n")
-
-get_credentials = get_cred
-a, password = get_cred("credentials.txt")
+# --- Legacy Credential Cleanup ---
+if os.path.exists("credentials.txt"):
+    try:
+        os.remove("credentials.txt")
+        print(f"   {Fore.GREEN}[+] Deleted legacy plaintext credentials.txt file.")
+    except:
+        pass
 
 # SSL BYPASS
 _original_init = httpx.AsyncClient.__init__
@@ -175,8 +141,6 @@ async def vtopClientLogin(client: VtopClient) -> bool:
         print(f"{Fore.RED}Login Failed: {e}")
         return False
 
-async def download_material(client, url_suffix, filename):
-    return await download_gate_pass(client, url_suffix, filename)
 
 def print_header(title):
     print(f"\n{PEACH}{Style.BRIGHT}{title}")
@@ -796,7 +760,7 @@ async def main():
                 print(f"   {Fore.WHITE}13. Student Profile")
                 print(f"   {Fore.WHITE}14. Change Semester")
                 print(f"   {Fore.WHITE}15. Update Credentials")
-                print(f"   {Fore.WHITE}16. Bunk Predictor (Simulate Absences)")
+                print(f"   {Fore.WHITE}16. Absence Predictor (Simulate Absences)")
                 print(f"   {Fore.WHITE}17. Open VTOP in Browser")
 
                 print(f"\n   {Fore.RED}0.  Exit")
@@ -1522,56 +1486,24 @@ async def main():
                 
                 elif choice == '16': 
                     try:
-                        import json
                         import os
                         from datetime import datetime as dt_obj, timedelta
                         import services
                         import asyncio
 
-                        print(f"\n   {PEACH}{Style.BRIGHT}[ BUNK SIMULATOR ]")
-                        current_year = dt_obj.now().year
+                        print(f"\n   {PEACH}{Style.BRIGHT}[ ABSENCE PREDICTOR ]")
+                        print(f"   {Fore.CYAN}[i] Simulate how skipping future classes affects your attendance.")
                         
-                        if os.path.exists("calendar_COMB_cache.json"):
-                            try:
-                                with open("calendar_COMB_cache.json", "r", encoding="utf-8") as f:
-                                    calendar_data = json.load(f)
-                                    
-                                    today_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                                    print(f"   {Fore.CYAN}[i] Upcoming Non-Instructional, Exam Days and Holidays:")
-                                    
-                                    printed_any = False
-                                    for event in calendar_data:
-                                        parts = event.get("particulars", "")
-                                        # Filter out standard working days (Keep Holidays, Exams, etc.)
-                                        if "Instructional Day (Working Day)" not in parts:
-                                            try:
-                                                event_date = dt_obj.strptime(event["date"], "%d-%b-%Y")
-                                                # Convert to dd-mm for the simulator engine
-                                                day_month = event_date.strftime("%d-%m")
-                                                academic_calendar_blocks[day_month] = parts
-                                                
-                                                # Only print future events to the user
-                                                if event_date >= today_dt:
-                                                    day_name = event_date.strftime("%A")
-                                                    print(f"       {Fore.WHITE}{event['date']} -- {PEACH}{day_name:<9}{Fore.WHITE} -- {parts}")
-                                                    printed_any = True
-                                            except Exception:
-                                                pass 
-                                            
-                                    if not printed_any:
-                                        print(f"       {PEACH}(No upcoming holidays/exams found)")
-                                    print(f"   {Fore.CYAN}" + "-"*45)
-                            except Exception as e: 
-                                print(f"   {Fore.RED}[!] Could not parse calendar: {e}")
+                        current_year = dt_obj.now().year
+                        today_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
-                        bunk_input = input(f"   {PEACH}Enter dates (e.g. 21-4, 28-4 to 2-5, 5-5): {Fore.WHITE}").strip()
-                        if not bunk_input: continue
+                        absence_input = input(f"\n   {PEACH}[>] Enter dates to skip (e.g. 25-9, 28-9 to 2-10): {Fore.WHITE}").strip()
+                        if not absence_input: continue
 
                         valid_dates = []
                         try:
                             from services import parse_date
-                            current_year = dt.now().year
-                            segments = [s.strip() for s in bunk_input.split(',')]
+                            segments = [s.strip() for s in absence_input.split(',')]
 
                             for segment in segments:
                                 segment = segment.strip()
@@ -1581,9 +1513,9 @@ async def main():
                                     start_str, end_str = [x.strip() for x in segment.lower().split(' to ')]
                                     start_dt = parse_date(start_str, default_year=current_year)
                                     end_dt   = parse_date(end_str,   default_year=current_year)
-
-                                    if end_dt < start_dt:
-                                        end_dt = parse_date(end_str, default_year=current_year + 1)
+                                    
+                                    if start_dt < today_dt: start_dt = parse_date(start_str, default_year=current_year + 1)
+                                    if end_dt < start_dt: end_dt = parse_date(end_str, default_year=current_year + 1)
 
                                     if end_dt < start_dt:
                                         print(f"   {Fore.RED}[!] End date is before start date in range: '{segment}'")
@@ -1594,7 +1526,9 @@ async def main():
                                     for i in range(delta + 1):
                                         valid_dates.append(start_dt + timedelta(days=i))
                                 else:
-                                    valid_dates.append(parse_date(segment, default_year=current_year))
+                                    d = parse_date(segment, default_year=current_year)
+                                    if d < today_dt: d = parse_date(segment, default_year=current_year + 1)
+                                    valid_dates.append(d)
 
                             if not valid_dates: continue
                             valid_dates = sorted(set(valid_dates))
@@ -1603,16 +1537,13 @@ async def main():
                             print(f"   {Fore.RED}[!] {e}")
                             continue
 
-                        sem_end_dt = dt_obj(current_year, 5, 19) 
-                        if max(valid_dates) > sem_end_dt:
-                            print(f"\n   {Fore.RED}[!] Halt: The semester officially ends on 19-05.")
-                            print(f"   {Fore.RED}[!] You cannot simulate attendance beyond this date.")
-                            continue
-
                         print(f"\n   {Fore.CYAN}[.] Fetching timetable...")
                         timetable_data = await fetchTimetable(client, target_sem)
                         print(f"   {Fore.CYAN}[.] Fetching attendance...")
                         attendance_data = await fetchAttendance(client, target_sem)
+                        
+                        print(f"   {Fore.CYAN}[.] Scraping Academic Calendar for holidays...")
+                        blocked_dates = await fetch_academic_calendar_holidays(client, target_sem)
 
                         if not timetable_data or not attendance_data:
                             print(f"   {Fore.RED}[x] Data fetch failed. Cannot run simulation.")
@@ -1639,12 +1570,12 @@ async def main():
                                     await asyncio.sleep(0.4)
                                 except Exception: pass
 
-                        report = services.simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, academic_calendar_blocks)
+                        report = services.simulate_absences(valid_dates, timetable_data, attendance_data, blocked_dates)
                         print(report)
                         input(f"\n   {PEACH}Press Enter to return to menu...{Fore.WHITE}")
                     except Exception as e: 
                         print(f"   {Fore.RED}[!] Simulation error: {e}")
-
+                        
                 elif choice == '17':
                     print_header("OPEN VTOP IN BROWSER")
                     await open_vtop_browser(client)

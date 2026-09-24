@@ -8,6 +8,7 @@ token.txt
 vtop.txt
 services.txt
 credentials.txt
+credentials.dat
 *.html
 
 # --- Python ---

@@ -25,15 +25,29 @@ def get_hardware_id() -> str:
     sys_name = platform.system()
     try:
         if sys_name == 'Windows':
-            return subprocess.check_output('wmic csproduct get uuid', shell=True).decode().split('\n')[1].strip()
+            # Try PowerShell first (default in Win 11), swallow all errors silently
+            try:
+                res = subprocess.run('powershell.exe -Command "(Get-CimInstance -Class Win32_ComputerSystemProduct).UUID"', shell=True, capture_output=True, text=True)
+                if res.returncode == 0 and res.stdout.strip():
+                    return res.stdout.strip()
+            except Exception: pass
+            
+            # Fallback to WMIC (older Windows), completely hiding the stderr message
+            try:
+                res = subprocess.run('wmic csproduct get uuid', shell=True, capture_output=True, text=True)
+                if res.returncode == 0 and res.stdout.strip():
+                    return res.stdout.split('\n')[1].strip()
+            except Exception: pass
         elif sys_name == 'Darwin':
-            out = subprocess.check_output("/usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID", shell=True)
-            return out.decode().split('"')[3]
+            res = subprocess.run("/usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID", shell=True, capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.split('"')[3]
         elif sys_name == 'Linux':
             with open('/etc/machine-id', 'r') as f:
                 return f.read().strip()
     except Exception:
         pass
+    
     import socket
     return socket.gethostname()
 
@@ -1258,25 +1272,110 @@ def generate_da_report(da_data):
         result_msg += "\n"
     return result_msg
 
-def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocked_dates):
+async def fetch_academic_calendar_holidays(client, semester_id: str) -> dict:
+    import re
+    import time
+    from bs4 import BeautifulSoup
+
+    base_url = "https://vtop.vitap.ac.in/vtop"
+    reg_no = get_auth_id(client)
+    token = getattr(client, "csrf_token", "")
+    headers = {
+        'X-Requested-With': 'XMLHttpRequest', 
+        'Origin': 'https://vtop.vitap.ac.in', 
+        'Referer': 'https://vtop.vitap.ac.in/vtop/content?'
+    }
+
+    await client._client.post(
+        f"{base_url}/academics/common/CalendarPreview",
+        data={'verifyMenu': 'true', 'authorizedID': reg_no, '_csrf': token, 'nocache': '@(new Date().getTime())'},
+        headers=headers
+    )
+
+    res_months = await client._client.post(
+        f"{base_url}/getDateForSemesterPreview",
+        data={
+            '_csrf': token, 
+            'paramReturnId': 'getDateForSemesterPreview', 
+            'semSubId': semester_id, 
+            'authorizedID': reg_no,
+            'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+        },
+        headers=headers
+    )
+
+    month_dates = re.findall(r"processViewCalendar\(\s*(?:'|&#39;)(.*?)(?:'|&#39;)\s*\)", res_months.text)
+    
+    blocked_dates = {}
+    month_map = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+
+    for cal_date in set(month_dates):
+        parts = cal_date.split('-')
+        if len(parts) != 3: continue
+        month_num = month_map.get(parts[1].upper())
+        if not month_num: continue
+        
+        payload = {
+            '_csrf': token, 'calDate': cal_date, 'semSubId': semester_id,
+            'classGroupId': 'COMB', 'authorizedID': reg_no,
+            'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+        }
+        res_cal = await client._client.post(f"{base_url}/processViewCalendar", data=payload, headers=headers)
+        soup = BeautifulSoup(res_cal.text, 'html.parser')
+        
+        table = soup.select_one("table.calendar-table, table")
+        if not table: continue
+
+        rows = table.find_all('tr')
+        if len(rows) < 2: continue
+
+        for row in rows[1:]:
+            for cell in row.find_all('td'):
+                spans = cell.find_all('span')
+                if not spans: continue
+                
+                day_str = spans[0].get_text(strip=True)
+                if not day_str.isdigit(): continue
+                
+                is_holiday = False
+                combined_text = " ".join(span.get_text(strip=True).lower() for span in spans[1:])
+                
+                blocked_keywords = [
+                    "holiday", "no instructional", "non instructional", 
+                    "exam days", "cat -", "cat-", "final assessment test"
+                ]
+                
+                if "lab fat" in combined_text and "exam days" not in combined_text:
+                    is_holiday = False
+                elif any(kw in combined_text for kw in blocked_keywords):
+                    is_holiday = True
+                        
+                if is_holiday:
+                    # Save the clean name of the holiday/exam so the predictor can tell you why it skipped it
+                    clean_name = spans[1].get_text(strip=True) if len(spans) > 1 else "Holiday / Exam"
+                    blocked_dates[f"{int(day_str):02d}-{month_num:02d}"] = clean_name
+
+    return blocked_dates
+
+def simulate_absences(absence_dates, timetable_data, attendance_data, blocked_dates):
+    import math
     from datetime import datetime as dt_obj, timedelta
     from colorama import Fore, Style
 
-    if not valid_dates: return f"   {Fore.RED}[!] No valid dates provided."
+    if not absence_dates: return f"   {Fore.RED}[!] No valid dates provided."
 
-    max_bunk_date = max(valid_dates)
-    sem_end_dt = dt_obj(max_bunk_date.year, 5, 19)
-    if max_bunk_date > sem_end_dt: return f"\n   {Fore.RED}[!] HALT: The semester officially ends on 19-05.\n   [!] You cannot simulate attendance beyond this date.\n"
+    max_absence_date = max(absence_dates)
+    if (max_absence_date - dt_obj.now()).days > 180:
+        return f"\n   {Fore.RED}[!] HALT: Cannot simulate more than 6 months into the future.\n"
 
-    clean_blocked = {}
-    for k, v in blocked_dates.items():
-        try:
-            parts = k.split('-')
-            clean_blocked[f"{int(parts[0]):02d}-{int(parts[1]):02d}"] = v
-        except: clean_blocked[k] = v
-
-    bunk_set = {dt_obj.strftime(dt, "%d-%m") for dt in valid_dates}
+    absence_set = {dt_obj.strftime(dt, "%d-%m") for dt in absence_dates}
     sim_att, original_data, classes_missed = {}, {}, 0
+    
+    # Track which requested bunks are impossible because they fall on holidays/weekends
+    ignored_bunks = {}
+    for d in absence_set:
+        if d in blocked_dates:
+            ignored_bunks[d] = blocked_dates[d]
 
     for att in attendance_data:
         key = att['course_code'] + att['type_code']
@@ -1289,41 +1388,56 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
                 except ValueError: last_upd_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             last_upd_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            
+        if last_upd_dt > dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0):
+            last_upd_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
         
         val = {
             "code": att['course_code'], "type": att['type_code'], "attended": int(att['attended']), "total": int(att['total']),
             "current_pct": float(att['percentage']), "last_updated": last_upd_dt, "gap_classes": 0, "gap_breakdown": [], "missed_breakdown": []    
         }
         sim_att[key], original_data[key] = val.copy(), val.copy()
-        curr_dt = last_upd_dt + timedelta(days=1)
         
-        while curr_dt <= max_bunk_date:
+        curr_dt = last_upd_dt + timedelta(days=1)
+        while curr_dt <= max_absence_date:
             day_name, date_str_full = curr_dt.strftime("%A"), curr_dt.strftime("%d-%m")
-            if date_str_full in clean_blocked:
+            
+            # Skip if it's a scraped holiday or a weekend
+            if date_str_full in blocked_dates or day_name in ["Saturday", "Sunday"]:
+                if date_str_full in absence_set and date_str_full not in ignored_bunks and day_name in ["Saturday", "Sunday"]:
+                    ignored_bunks[date_str_full] = "Weekend"
                 curr_dt += timedelta(days=1)
                 continue
             
-            day_classes, course_happens_today, penalty = timetable_data.get(day_name, []), False, 1
+            day_classes, course_happens_today, daily_penalty = timetable_data.get(day_name, []), False, 0
             for cls in day_classes:
                 if cls['course_code'] == val['code'] and cls['course_type'] == val['type']:
-                    course_happens_today, penalty = True, 2 if cls['course_type'] in ['ELA', 'LO'] else 1
-                    break 
+                    course_happens_today = True
+                    c_type = cls.get('course_type', '').upper()
+                    daily_penalty += 2 if c_type in ['ELA', 'LO', 'PRACTICAL', 'LAB'] else 1
             
-            if course_happens_today:
-                if date_str_full in bunk_set:
-                    sim_att[key]['total'] += penalty
-                    classes_missed += penalty
-                    sim_att[key]['missed_breakdown'].append(f"{date_str_full} ({day_name[:3]}) : +{penalty} missed")
+            if course_happens_today and daily_penalty > 0:
+                if date_str_full in absence_set:
+                    sim_att[key]['total'] += daily_penalty
+                    classes_missed += daily_penalty
+                    sim_att[key]['missed_breakdown'].append(f"{date_str_full} ({day_name[:3]}) : +{daily_penalty} missed")
                 else:
-                    sim_att[key]['total'] += penalty
-                    sim_att[key]['attended'] += penalty
-                    sim_att[key]['gap_classes'] += penalty
-                    sim_att[key]['gap_breakdown'].append(f"{date_str_full} ({day_name[:3]}) : +{penalty}")
+                    sim_att[key]['total'] += daily_penalty
+                    sim_att[key]['attended'] += daily_penalty
+                    sim_att[key]['gap_classes'] += daily_penalty
+                    sim_att[key]['gap_breakdown'].append(f"{date_str_full} ({day_name[:3]}) : +{daily_penalty}")
             curr_dt += timedelta(days=1)
 
-    result_msg = f"\n   {Fore.CYAN}" + "="*55 + "\n"
-    result_msg += f"   {PEACH}{Style.BRIGHT}SUBJECT-WISE BUNK CALCULATION\n"
-    result_msg += f"   {Fore.CYAN}" + "="*55 + f"\n\n{Fore.WHITE}"
+    result_msg = f"\n   {Fore.CYAN}" + "="*60 + "\n"
+    result_msg += f"   {PEACH}{Style.BRIGHT}SUBJECT-WISE ABSENCE PREDICTION\n"
+    result_msg += f"   {Fore.CYAN}" + "="*60 + f"\n\n{Fore.WHITE}"
+    
+    # Print the explanation if the user tried to bunk an exam/holiday
+    if ignored_bunks:
+        result_msg += f"   {Fore.YELLOW}[i] Some dates were ignored because no classes are scheduled:\n"
+        for date_val, reason in ignored_bunks.items():
+            result_msg += f"       - {date_val} ({reason})\n"
+        result_msg += "\n"
     
     impact_found = False
     for key in sim_att:
@@ -1342,10 +1456,19 @@ def simulate_multi_day_bunk(valid_dates, timetable_data, attendance_data, blocke
                 for g_log in new['gap_breakdown']: result_msg += f"   │  ├ {g_log}\n"
             
             if new['missed_breakdown']:
-                result_msg += f"   ├ Bunking :\n"
+                result_msg += f"   ├ Skipping :\n"
                 for m_log in new['missed_breakdown']: result_msg += f"   │  ├ {Fore.RED}{m_log}{Fore.WHITE}\n"
                 
-            result_msg += f"   └ Projected: {PEACH if new_pct < 75 else Fore.GREEN}{new_pct:.0f}% ({new['attended']}/{new['total']}){alert}\n\n"
+            result_msg += f"   └ Projected: {PEACH if new_pct < 75 else Fore.GREEN}{new_pct:.0f}% ({new['attended']}/{new['total']}){alert}\n"
+            
+            if new_pct >= 75:
+                safe_margin = math.floor(new['attended'] - 0.75 * new['total'])
+                safe_str = "class" if safe_margin == 1 else "classes"
+                result_msg += f"     └ You can safely miss {Fore.GREEN}{safe_margin}{Fore.WHITE} more {safe_str}.\n\n"
+            else:
+                needed = math.ceil((0.75 * new['total'] - new['attended']) / 0.25)
+                attend_str = "class" if needed == 1 else "classes"
+                result_msg += f"     └ Must attend next {Fore.RED}{needed}{Fore.WHITE} {attend_str}.\n\n"
 
     if not impact_found: result_msg += f"   {Fore.GREEN}[OK] No attendance changes detected for this timeframe.\n"
     else: result_msg += f"   {PEACH}Total attendance periods skipped: {classes_missed}"
@@ -1480,3 +1603,5 @@ asyncio.run(run())
         print(f"   {Fore.CYAN}[i] Log: {log_file}")
     except Exception as e:
         print(f"   {Fore.RED}[x] Failed to launch browser: {e}")
+
+
