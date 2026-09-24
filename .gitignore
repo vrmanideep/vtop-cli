@@ -1,12 +1,14 @@
 .env
+
 # Ignore downloaded lecture materials
 downloads/
 VTOP_Downloads/
+vtop_docs/
 token.txt
 vtop.txt
 services.txt
 credentials.txt
-.html
+*.html
 
 # --- Python ---
 __pycache__/

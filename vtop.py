@@ -11,6 +11,7 @@ def check_dependencies():
         import httpx
         import pwinput
         import colorama
+        import cryptography
     except ImportError as e:
         print(f"\n   [!] Missing required module: {e.name}")
         print("   [.] Running First-Time Setup: Installing dependencies...")
@@ -18,9 +19,9 @@ def check_dependencies():
         
         try:
             subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "playwright", "install", "chromium", "--quiet"]
+                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "playwright", "install", "chromium", "cryptography", "--quiet"]
             )
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "colorama", "--quiet"])
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "colorama", "cryptography", "--quiet"])
             
             print("\n   [✓] Dependencies installed successfully!")
             print("   [+] Launching VTOP CLI...\n")
@@ -28,7 +29,7 @@ def check_dependencies():
             
         except subprocess.CalledProcessError:
             print("\n   [x] Auto-install failed.")
-            print("   [!] Please run 'pip install -r requirements.txt' manually.")
+            print("   [!] Please run 'pip install -r requirements.txt cryptography' manually.")
             sys.exit(1)
 
 check_dependencies()
@@ -663,7 +664,7 @@ async def main():
     global asyncio
     
     while True:
-        reg_no, password = get_credentials("credentials.txt")
+        reg_no, password = get_credentials("credentials.dat")
         print(f"\n{Fore.CYAN}[.] Connecting to V-TOP as {reg_no}...")
         
         login_success = False
@@ -687,9 +688,9 @@ async def main():
                     sys.exit() 
                 elif action == 'WIPE':
                     import os
-                    if os.path.exists("credentials.txt"):
-                        os.remove("credentials.txt")
-                    print(f"{PEACH}[-] Trashed credentials. Let's try again...\n")
+                    if os.path.exists("credentials.dat"):
+                        os.remove("credentials.dat")
+                    print(f"{PEACH}[-] Trashed encrypted vault. Let's try again...\n")
                 
                 continue
 
@@ -1503,13 +1504,20 @@ async def main():
                     new_pass = pwinput.pwinput(prompt=f"   {PEACH}[>] Enter New VTOP Password: {Fore.WHITE}", mask="*").strip()
                     
                     if new_user and new_pass:
-                        confirm = input(f"\n   {PEACH}Save new credentials and restart? (y/n): {Fore.WHITE}").strip().lower()
+                        confirm = input(f"\n   {PEACH}Encrypt new credentials and restart? (y/n): {Fore.WHITE}").strip().lower()
                         if confirm == 'y':
-                            with open("credentials.txt", "w") as f:
-                                f.write(f"{new_user}\n{new_pass}\n")
+                            import json
+                            from cryptography.fernet import Fernet
+                            key = get_encryption_key() # From services.py
+                            cipher = Fernet(key)
+                            data = json.dumps({"username": new_user, "password": new_pass}).encode('utf-8')
+                            
+                            with open("credentials.dat", "wb") as f:
+                                f.write(cipher.encrypt(data))
+                                
                             import os
                             import sys
-                            print(f"   {Fore.GREEN}[✓] Credentials updated successfully! Restarting...")
+                            print(f"   {Fore.GREEN}[✓] Vault updated successfully! Restarting...")
                             os.execv(sys.executable, ['python'] + sys.argv)
                 
                 elif choice == '16': 
