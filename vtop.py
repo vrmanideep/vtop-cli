@@ -298,6 +298,7 @@ async def print_attendance_with_details(client, semester_id, summary_data):
                 
                     history.sort(key=parse_date)
                     last_date = history[-1].get('date', 'N/A')
+                    sub['exact_last_date'] = last_date # Inject for cache
                     print(f"        {Fore.CYAN}Attendance Last Updated on: {Fore.WHITE}{last_date}")
                     
                     exceptions = [h for h in history if "Present" not in h['status']]
@@ -328,6 +329,8 @@ async def print_attendance_with_details(client, semester_id, summary_data):
         else:
             print(f"        {Fore.RED}[!] Cannot fetch details (ID missing).")
         print(f"   {Fore.CYAN}" + "-" * 50)
+        
+    services.save_cache("attendance", summary_data)
 
 def print_attendance(data):
     if not data:
@@ -760,14 +763,15 @@ async def main():
                 print(f"   {Fore.WHITE}13. Student Profile")
                 print(f"   {Fore.WHITE}14. Change Semester")
                 print(f"   {Fore.WHITE}15. Update Credentials")
-                print(f"   {Fore.WHITE}16. Absence Predictor (Simulate Absences)")
-                print(f"   {Fore.WHITE}17. Open VTOP in Browser")
+                print(f"   {Fore.WHITE}16. Academic Calendar")
+                print(f"   {Fore.WHITE}17. Absence Predictor (Simulate Absences)")
+                print(f"   {Fore.WHITE}18. Open VTOP in Browser")
 
                 print(f"\n   {Fore.RED}0.  Exit")
                 print(f"   {Fore.CYAN}" + "─" * 40)
                 
                 print("", end="\n", flush=True)
-                choice = input(f"   {PEACH}Select Option {Fore.WHITE}[1-17, or 'r' to Sync]: {Style.RESET_ALL}").strip().lower()
+                choice = input(f"   {PEACH}Select Option {Fore.WHITE}[1-18, or 'r' to Sync]: {Style.RESET_ALL}").strip().lower()
                 
                 # --- THE SYNC SHORTCUT ---
                 if choice in ['r', 'sync', 'refresh']:
@@ -818,6 +822,7 @@ async def main():
                         continue
                     print_header(f"FULL TIMETABLE - {current_sem_name}")
                     data = await fetchTimetable(client, target_sem)
+                    services.save_cache("timetable", data)
                     print_timetable(data)
 
                 elif choice == '3':
@@ -1484,101 +1489,190 @@ async def main():
                             print(f"   {Fore.GREEN}[✓] Vault updated successfully! Restarting...")
                             os.execv(sys.executable, ['python'] + sys.argv)
                 
-                elif choice == '16': 
-                    try:
-                        import os
-                        from datetime import datetime as dt_obj, timedelta
-                        import services
-                        import asyncio
-
-                        print(f"\n   {PEACH}{Style.BRIGHT}[ ABSENCE PREDICTOR ]")
-                        print(f"   {Fore.CYAN}[i] Simulate how skipping future classes affects your attendance.")
+                elif choice == '16':
+                    import services
+                    
+                    if not target_sem:
+                        print(f"   {Fore.RED}[!] No semester selected. Use option 14.")
+                        continue
                         
-                        current_year = dt_obj.now().year
-                        today_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
-
-                        absence_input = input(f"\n   {PEACH}[>] Enter dates to skip (e.g. 25-9, 28-9 to 2-10): {Fore.WHITE}").strip()
-                        if not absence_input: continue
-
-                        valid_dates = []
+                    print_header(f"ACADEMIC CALENDAR - {current_sem_name}")
+                    print(f"   {Fore.CYAN}[.] Fetching available months...")
+                    
+                    months = await services.fetch_calendar_months(client, target_sem)
+                    if not months:
+                        print(f"   {Fore.RED}[!] Could not fetch calendar months.")
+                        continue
+                        
+                    while True:
+                        print(f"\n   {Fore.CYAN}SELECT MONTH:")
+                        for i, m in enumerate(months):
+                            print(f"   {Fore.WHITE}{i+1}. {m['label']}")
+                        print(f"   {Fore.RED}0. Back to Main Menu")
+                        
+                        m_sel = input(f"\n   {PEACH}Choice: {Fore.WHITE}").strip()
+                        if m_sel == '0': break
+                        
                         try:
-                            from services import parse_date
-                            segments = [s.strip() for s in absence_input.split(',')]
-
-                            for segment in segments:
-                                segment = segment.strip()
-                                if not segment: continue
-
-                                if ' to ' in segment.lower():
-                                    start_str, end_str = [x.strip() for x in segment.lower().split(' to ')]
-                                    start_dt = parse_date(start_str, default_year=current_year)
-                                    end_dt   = parse_date(end_str,   default_year=current_year)
+                            idx = int(m_sel) - 1
+                            if 0 <= idx < len(months):
+                                selected_month = months[idx]
+                                print(f"   {Fore.CYAN}[.] Fetching calendar for {selected_month['label']}...")
+                                cal_days = await services.fetch_calendar_view(client, target_sem, selected_month['cal_date'])
+                                
+                                print(f"\n   {PEACH}{Style.BRIGHT}CALENDAR: {selected_month['label']}")
+                                print(f"   {Fore.CYAN}" + "─" * 105)
+                                
+                                found_events = False
+                                for d in cal_days:
+                                    if not d['events']: continue
+                                    found_events = True
+                                    day_str = f"{d['day']:02d} ({d['weekday'][:3]})"
                                     
-                                    if start_dt < today_dt: start_dt = parse_date(start_str, default_year=current_year + 1)
-                                    if end_dt < start_dt: end_dt = parse_date(end_str, default_year=current_year + 1)
-
-                                    if end_dt < start_dt:
-                                        print(f"   {Fore.RED}[!] End date is before start date in range: '{segment}'")
-                                        valid_dates = []
-                                        break
-
-                                    delta = (end_dt - start_dt).days
-                                    for i in range(delta + 1):
-                                        valid_dates.append(start_dt + timedelta(days=i))
-                                else:
-                                    d = parse_date(segment, default_year=current_year)
-                                    if d < today_dt: d = parse_date(segment, default_year=current_year + 1)
-                                    valid_dates.append(d)
-
-                            if not valid_dates: continue
-                            valid_dates = sorted(set(valid_dates))
-
-                        except ValueError as e:
-                            print(f"   {Fore.RED}[!] {e}")
-                            continue
-
-                        print(f"\n   {Fore.CYAN}[.] Fetching timetable...")
-                        timetable_data = await fetchTimetable(client, target_sem)
-                        print(f"   {Fore.CYAN}[.] Fetching attendance...")
-                        attendance_data = await fetchAttendance(client, target_sem)
-                        
-                        print(f"   {Fore.CYAN}[.] Scraping Academic Calendar for holidays...")
-                        blocked_dates = await fetch_academic_calendar_holidays(client, target_sem)
-
-                        if not timetable_data or not attendance_data:
-                            print(f"   {Fore.RED}[x] Data fetch failed. Cannot run simulation.")
-                            continue
-
-                        print(f"   {Fore.CYAN}[.] Syncing exact timelines for subjects... (Takes a few seconds)")
-                        for sub in attendance_data:
-                            c_id = sub.get('course_id')
-                            type_id = sub.get('type_id') or sub.get('type_code')
-                            sub['exact_last_date'] = None 
-                            if c_id and type_id:
-                                try:
-                                    history = await fetchAttendanceDetail(client, target_sem, c_id, type_id)
-                                    if history:
-                                        def p_date(x):
-                                            try: return dt_obj.strptime(x['date'], "%d-%b-%Y")
-                                            except:
-                                                try: return dt_obj.strptime(x['date'], "%d-%m-%Y")
-                                                except: return dt_obj.min
+                                    ev_combined = " ".join(d['events']).lower()
+                                    if "holiday" in ev_combined or "no instructional" in ev_combined: c = PEACH
+                                    elif "exam" in ev_combined or "cat" in ev_combined or "fat" in ev_combined: c = Fore.YELLOW
+                                    else: c = Fore.GREEN
                                         
-                                        history.sort(key=p_date)
-                                        sub['exact_last_date'] = history[-1].get('date') 
-                                        
-                                    await asyncio.sleep(0.4)
-                                except Exception: pass
+                                    print(f"   {Fore.WHITE}{day_str:<10} | ", end="")
+                                    for i, ev in enumerate(d['events']):
+                                        if i == 0: print(f"{c}{ev}")
+                                        else: print(f"   {'':<13} | {c}{ev}")
+                                    print(f"   {Fore.CYAN}" + "-" * 105)
+                                    
+                                if not found_events:
+                                    print(f"   {Fore.WHITE}No special events or holidays found this month.")
+                                    print(f"   {Fore.CYAN}" + "-" * 105)
+                                    
+                                input(f"\n   {PEACH}Press Enter to return to months menu...{Fore.WHITE}")
+                            else:
+                                print(f"   {Fore.RED}[!] Invalid choice.")
+                        except ValueError:
+                            print(f"   {Fore.RED}[!] Please enter a valid number.")
 
-                        report = services.simulate_absences(valid_dates, timetable_data, attendance_data, blocked_dates)
-                        print(report)
-                        input(f"\n   {PEACH}Press Enter to return to menu...{Fore.WHITE}")
-                    except Exception as e: 
-                        print(f"   {Fore.RED}[!] Simulation error: {e}")
-                        
-                elif choice == '17':
+                elif choice == '17': 
+                    import os
+                    from datetime import datetime as dt_obj, timedelta
+                    import services
+                    import asyncio
+
+                    print(f"\n   {PEACH}{Style.BRIGHT}[ ABSENCE PREDICTOR ]")
+                    print(f"   {Fore.CYAN}[i] Simulate how skipping future classes affects your attendance.")
+                    
+                    while True:
+                        try:
+                            current_year = dt_obj.now().year
+                            today_dt = dt_obj.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                            absence_input = input(f"\n   {PEACH}[>] Enter dates to skip ('sync' to refresh, '0' to exit): {Fore.WHITE}").strip()
+                            
+                            if not absence_input or absence_input == '0': 
+                                break
+                            
+                            force_sync = False
+                            if absence_input.lower() in ['sync', 'force fetch', 'refresh']:
+                                force_sync = True
+                                absence_input = input(f"   {PEACH}[>] Enter dates to skip (e.g. 25-9) or '0' to exit: {Fore.WHITE}").strip()
+                                if not absence_input or absence_input == '0': 
+                                    break
+
+                            valid_dates = []
+                            try:
+                                from services import parse_date
+                                segments = [s.strip() for s in absence_input.split(',')]
+
+                                for segment in segments:
+                                    segment = segment.strip()
+                                    if not segment: continue
+
+                                    if ' to ' in segment.lower():
+                                        start_str, end_str = [x.strip() for x in segment.lower().split(' to ')]
+                                        start_dt = parse_date(start_str, default_year=current_year)
+                                        end_dt   = parse_date(end_str,   default_year=current_year)
+                                        
+                                        if start_dt < today_dt: start_dt = parse_date(start_str, default_year=current_year + 1)
+                                        if end_dt < start_dt: end_dt = parse_date(end_str, default_year=current_year + 1)
+
+                                        if end_dt < start_dt:
+                                            print(f"   {Fore.RED}[!] End date is before start date in range: '{segment}'")
+                                            valid_dates = []
+                                            break
+
+                                        delta = (end_dt - start_dt).days
+                                        for i in range(delta + 1):
+                                            valid_dates.append(start_dt + timedelta(days=i))
+                                    else:
+                                        d = parse_date(segment, default_year=current_year)
+                                        if d < today_dt: d = parse_date(segment, default_year=current_year + 1)
+                                        valid_dates.append(d)
+
+                                if not valid_dates: continue
+                                valid_dates = sorted(set(valid_dates))
+
+                            except ValueError as e:
+                                print(f"   {Fore.RED}[!] {e}")
+                                continue
+
+                            timetable_data = None if force_sync else services.load_cache("timetable")
+                            attendance_data = None if force_sync else services.load_cache("attendance")
+                            blocked_dates = None if force_sync else services.load_cache("holidays")
+
+                            if attendance_data and len(attendance_data) > 0 and 'exact_last_date' not in attendance_data[0]:
+                                attendance_data = None
+
+                            used_cache = True
+                            if not timetable_data:
+                                used_cache = False
+                                print(f"   {Fore.CYAN}[.] Fetching timetable...")
+                                timetable_data = await fetchTimetable(client, target_sem)
+                                services.save_cache("timetable", timetable_data)
+
+                            if not blocked_dates:
+                                used_cache = False
+                                print(f"   {Fore.CYAN}[.] Scraping Academic Calendar for holidays...")
+                                blocked_dates = await fetch_academic_calendar_holidays(client, target_sem)
+                                services.save_cache("holidays", blocked_dates)
+
+                            if not attendance_data:
+                                used_cache = False
+                                print(f"   {Fore.CYAN}[.] Fetching attendance...")
+                                attendance_data = await fetchAttendance(client, target_sem)
+                                print(f"   {Fore.CYAN}[.] Syncing exact timelines for subjects... (Takes a few seconds)")
+                                for sub in attendance_data:
+                                    c_id = sub.get('course_id')
+                                    type_id = sub.get('type_id') or sub.get('type_code')
+                                    sub['exact_last_date'] = None 
+                                    if c_id and type_id:
+                                        try:
+                                            history = await fetchAttendanceDetail(client, target_sem, c_id, type_id)
+                                            if history:
+                                                def p_date(x):
+                                                    try: return dt_obj.strptime(x['date'], "%d-%b-%Y")
+                                                    except:
+                                                        try: return dt_obj.strptime(x['date'], "%d-%m-%Y")
+                                                        except: return dt_obj.min
+                                                history.sort(key=p_date)
+                                                sub['exact_last_date'] = history[-1].get('date') 
+                                            await asyncio.sleep(0.4)
+                                        except Exception: pass
+                                services.save_cache("attendance", attendance_data)
+
+                            if used_cache and not force_sync:
+                                print(f"   {Fore.CYAN}[.] Using cached data (less than 6 hours old)...")
+
+                            if not timetable_data or not attendance_data:
+                                print(f"   {Fore.RED}[x] Data fetch failed. Cannot run simulation.")
+                                continue
+
+                            report = services.simulate_absences(valid_dates, timetable_data, attendance_data, blocked_dates)
+                            print(report)
+                        except Exception as e: 
+                            print(f"   {Fore.RED}[!] Simulation error: {e}")
+                            
+                elif choice == '18':
                     print_header("OPEN VTOP IN BROWSER")
                     await open_vtop_browser(client)
+
 
 if __name__ == "__main__":
     #check_for_updates()

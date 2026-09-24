@@ -1195,38 +1195,64 @@ async def fetchDADetails(client, class_id):
         print(f"   [!] Error fetching DA details: {e}")
         return []
 
-async def fetchAndSaveCalendarCOMB(client, sem_sub_id: str, cal_date: str) -> str:
+async def fetch_calendar_months(client, semester_id: str) -> list:
+    import re, time
+    from bs4 import BeautifulSoup
     base_url = "https://vtop.vitap.ac.in/vtop"
-    dash_res = await client._client.get(f"{base_url}/content")
-    csrf_match = re.search(r'name="_csrf"\s+value="([a-f0-9-]+)"', dash_res.text)
-    token = csrf_match.group(1) if csrf_match else getattr(client, "csrf_token", "")
     reg_no = get_auth_id(client)
-    headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Origin': 'https://vtop.vitap.ac.in', 'Referer': 'https://vtop.vitap.ac.in/vtop/content?'}
-
+    token = getattr(client, "csrf_token", "")
+    headers = {'X-Requested-With': 'XMLHttpRequest', 'Origin': 'https://vtop.vitap.ac.in', 'Referer': 'https://vtop.vitap.ac.in/vtop/content?'}
+    
     await client._client.post(f"{base_url}/academics/common/CalendarPreview", data={'verifyMenu': 'true', 'authorizedID': reg_no, '_csrf': token, 'nocache': '@(new Date().getTime())'}, headers=headers)
-    await client._client.post(f"{base_url}/getDateForSemesterPreview", data={'_csrf': token, 'paramReturnId': 'getDateForSemesterPreview', 'semSubId': sem_sub_id, 'authorizedID': reg_no, 'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())}, headers=headers)
-    res = await client._client.post(f"{base_url}/processViewCalendar", data={'_csrf': token, 'calDate': cal_date, 'semSubId': sem_sub_id, 'classGroupId': 'COMB', 'authorizedID': reg_no, 'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())}, headers=headers)
+    res_months = await client._client.post(f"{base_url}/getDateForSemesterPreview", data={'_csrf': token, 'paramReturnId': 'getDateForSemesterPreview', 'semSubId': semester_id, 'authorizedID': reg_no, 'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())}, headers=headers)
+    
+    soup = BeautifulSoup(res_months.text, 'html.parser')
+    months, seen = [], set()
+    for a in soup.find_all('a'):
+        onclick = a.get('onclick', '')
+        # Uses the precise quote-escaped regex to find the months[cite: 6]
+        match = re.search(r"processViewCalendar\(\s*(?:'|&#39;)(.*?)(?:'|&#39;)\s*\)", onclick)
+        if match:
+            cal_date = match.group(1)
+            if cal_date not in seen:
+                label = a.get_text(strip=True) or cal_date
+                months.append({'label': label, 'cal_date': cal_date})
+                seen.add(cal_date)
+    return months
 
-    filename = f"calendar_COMB_{sem_sub_id}_{cal_date}.html"
-    with open(filename, 'w', encoding='utf-8') as f: f.write(res.text)
-    return filename
-
-async def fetchAndSaveCalendarALL(client, sem_sub_id: str, cal_date: str) -> str:
+async def fetch_calendar_view(client, semester_id: str, cal_date: str) -> list:
+    import time
+    from bs4 import BeautifulSoup
     base_url = "https://vtop.vitap.ac.in/vtop"
-    dash_res = await client._client.get(f"{base_url}/content")
-    csrf_match = re.search(r'name="_csrf"\s+value="([a-f0-9-]+)"', dash_res.text)
-    token = csrf_match.group(1) if csrf_match else getattr(client, "csrf_token", "")
     reg_no = get_auth_id(client)
-    headers = {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'Origin': 'https://vtop.vitap.ac.in', 'Referer': 'https://vtop.vitap.ac.in/vtop/content?'}
-
-    await client._client.post(f"{base_url}/academics/common/CalendarPreview", data={'verifyMenu': 'true', 'authorizedID': reg_no, '_csrf': token, 'nocache': '@(new Date().getTime())'}, headers=headers)
-    await client._client.post(f"{base_url}/getDateForSemesterPreview", data={'_csrf': token, 'paramReturnId': 'getDateForSemesterPreview', 'semSubId': sem_sub_id, 'authorizedID': reg_no, 'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())}, headers=headers)
-    await client._client.post(f"{base_url}/getListForSemester", data={'_csrf': token, 'paramReturnId': 'getListForSemester', 'semSubId': sem_sub_id, 'classGroupId': 'ALL', 'authorizedID': reg_no, 'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())}, headers=headers)
-    res = await client._client.post(f"{base_url}/processViewCalendar", data={'_csrf': token, 'calDate': cal_date, 'semSubId': sem_sub_id, 'classGroupId': 'ALL', 'authorizedID': reg_no, 'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())}, headers=headers)
-
-    filename = f"calendar_ALL_{sem_sub_id}_{cal_date}.html"
-    with open(filename, 'w', encoding='utf-8') as f: f.write(res.text)
-    return filename
+    token = getattr(client, "csrf_token", "")
+    headers = {'X-Requested-With': 'XMLHttpRequest', 'Origin': 'https://vtop.vitap.ac.in', 'Referer': 'https://vtop.vitap.ac.in/vtop/content?'}
+    
+    # Passing classGroupId COMB for the standard academic calendar[cite: 6]
+    payload = {'_csrf': token, 'calDate': cal_date, 'semSubId': semester_id, 'classGroupId': 'COMB', 'authorizedID': reg_no, 'x': time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())}
+    res_cal = await client._client.post(f"{base_url}/processViewCalendar", data=payload, headers=headers)
+    soup = BeautifulSoup(res_cal.text, 'html.parser')
+    
+    table = soup.select_one("table.calendar-table, table")
+    days = []
+    if not table: return days
+    
+    rows = table.find_all('tr')
+    if len(rows) < 2: return days
+    weekdays = [th.get_text(strip=True) for th in rows[0].find_all(['th', 'td'])]
+    
+    for row in rows[1:]:
+        for i, cell in enumerate(row.find_all('td')):
+            spans = cell.find_all('span')
+            if not spans: continue
+            day_num = spans[0].get_text(strip=True)
+            if not day_num.isdigit(): continue
+            
+            events = [span.get_text(strip=True) for span in spans[1:] if span.get_text(strip=True)]
+            days.append({'day': int(day_num), 'weekday': weekdays[i] if i < len(weekdays) else "", 'events': events})
+            
+    days.sort(key=lambda x: x['day'])
+    return days
 
 def generate_da_report(da_data):
     from colorama import Fore, Style
@@ -1605,3 +1631,26 @@ asyncio.run(run())
         print(f"   {Fore.RED}[x] Failed to launch browser: {e}")
 
 
+def get_cache_dir():
+    import os
+    # Get the exact folder where services.py (and vtop.py) is located
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    d = os.path.join(base_dir, "cache")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def save_cache(name, data):
+    try:
+        with open(os.path.join(get_cache_dir(), f"{name}.json"), "w") as f:
+            # Added indent=4 to pretty-print the JSON file
+            json.dump({"ts": time.time(), "data": data}, f, indent=4)
+    except: pass
+
+def load_cache(name, max_hours=6):
+    try:
+        with open(os.path.join(get_cache_dir(), f"{name}.json"), "r") as f:
+            c = json.load(f)
+            if time.time() - c["ts"] <= max_hours * 3600:
+                return c["data"]
+    except: pass
+    return None
