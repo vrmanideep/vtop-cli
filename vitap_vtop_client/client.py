@@ -66,8 +66,16 @@ class VtopClient:
         # Automatically load saved session cookies on startup
         self._load_session()
 
+    def _get_session_file_path(self):
+        """Resolves the cache directory relative to where the script is run."""
+        # This navigates up one level from vitap_vtop_client/client.py to the root, then into cache/
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cache_dir = os.path.join(base_dir, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        return os.path.join(cache_dir, "vtop_session.json")
+
     def _save_session(self):
-        """Saves the current httpx cookies to a local file, handling duplicate names safely."""
+        """Saves the current httpx cookies to the cache folder, handling duplicate names safely."""
         try:
             cookie_data = []
             # Dig into the underlying CookieJar to avoid the dictionary key collision
@@ -79,17 +87,19 @@ class VtopClient:
                     "path": cookie.path,
                 })
                 
-            with open("vtop_session.json", "w") as f:
+            session_file = self._get_session_file_path()
+            with open(session_file, "w") as f:
                 json.dump(cookie_data, f, indent=4)
                 
         except Exception as e:
             print(f"VtopClient: Failed to save session cookies: {e}")
 
     def _load_session(self):
-        """Loads saved cookies from file into the httpx client."""
-        if os.path.exists("vtop_session.json"):
+        """Loads saved cookies from the cache folder into the httpx client."""
+        session_file = self._get_session_file_path()
+        if os.path.exists(session_file):
             try:
-                with open("vtop_session.json", "r") as f:
+                with open(session_file, "r") as f:
                     cookie_data = json.load(f)
                     # Reconstruct the cookies with their specific domains and paths
                     for c in cookie_data:
@@ -101,17 +111,7 @@ class VtopClient:
                         )
             except Exception as e:
                 print(f"VtopClient: Failed to load session cookies: {e}")
-
-    def _load_session(self):
-        """Loads saved cookies from file into the httpx client."""
-        if os.path.exists("vtop_session.json"):
-            try:
-                with open("vtop_session.json", "r") as f:
-                    cookies = json.load(f)
-                    self._client.cookies.update(cookies)
-            except Exception:
-                pass
-
+                
     async def _perform_login_sequence(self) -> LoggedInStudent:
         """
         Handles the complete login sequence including fetching tokens, solving CAPTCHA, and 2FA.
