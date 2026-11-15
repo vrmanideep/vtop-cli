@@ -629,7 +629,7 @@ def printWeekendOuting(history):
     
 async def main():
     global asyncio
-    
+    setup_windows_search_shortcut()
     while True:
         reg_no, password = get_credentials("credentials.dat")
         print(f"\n{Fore.CYAN}[.] Connecting to V-TOP as {reg_no}...")
@@ -1673,6 +1673,65 @@ async def main():
                     print_header("OPEN VTOP IN BROWSER")
                     await open_vtop_browser(client)
 
+
+def setup_windows_search_shortcut():
+    import os
+    import sys
+    import subprocess
+
+    if os.name != 'nt':
+        return 
+
+    start_menu = os.path.join(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu", "Programs")
+    shortcut_path = os.path.join(start_menu, "VTOP CLI.lnk")
+
+    if os.path.exists(shortcut_path):
+        return
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    bat_path = os.path.join(script_dir, "vtop.bat")
+
+    if os.path.exists(bat_path):
+        target_path = bat_path
+        args = ""
+    else:
+        target_path = sys.executable
+        args = f'"{os.path.abspath(__file__)}"'
+
+    # Write to a .ps1 file to safely handle spaces and quotes in paths
+    ps_script = f"""
+$ErrorActionPreference = 'Stop'
+$WshShell = New-Object -comObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut('{shortcut_path}')
+$Shortcut.TargetPath = '{target_path}'
+$Shortcut.Arguments = '{args}'
+$Shortcut.WorkingDirectory = '{script_dir}'
+$Shortcut.Description = 'VIT-AP VTOP Command Line Interface'
+$Shortcut.IconLocation = 'cmd.exe, 0'
+$Shortcut.Save()
+"""
+    
+    ps_file = os.path.join(script_dir, "cache", "create_shortcut.ps1")
+    os.makedirs(os.path.dirname(ps_file), exist_ok=True)
+    
+    try:
+        with open(ps_file, "w") as f:
+            f.write(ps_script)
+        
+        # Execute the file directly using Bypass policy
+        result = subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", ps_file], 
+            capture_output=True, text=True
+        )
+        
+        os.remove(ps_file)
+        
+        if result.returncode == 0:
+            print(f"\n   \033[38;2;245;231;158m[✓] Added to Windows Search! You can now press the Windows Key and type 'VTOP CLI'.\033[0m")
+        else:
+            print(f"\n   \033[31m[x] Failed to create shortcut. Error: {result.stderr.strip()}\033[0m")
+    except Exception as e:
+        print(f"\n   \033[31m[x] Exception creating shortcut: {e}\033[0m")
 
 if __name__ == "__main__":
     #check_for_updates()
