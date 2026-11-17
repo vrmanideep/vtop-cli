@@ -2,6 +2,8 @@ import os
 import sys
 import subprocess
 
+import services
+
 # TrueColor (24-bit) RGB match for PowerShell's command yellow
 PEACH = '\033[38;2;245;231;158m'
 
