@@ -986,9 +986,16 @@ async def main():
                                     if dl_choice == 'A':
                                         print(f"   {Fore.CYAN}[.] Requesting ZIP bundle from VTOP servers...")
                                         
+                                        # Clean the faculty name and slot for safe Windows file paths
+                                        fac_clean = re.sub(r'^\d+\s*-\s*', '', selected_class['faculty'])
+                                        fac_clean = re.sub(r'\s*-[A-Z\s]+$', '', fac_clean).strip()
+                                        
+                                        safe_fac = re.sub(r'[^a-zA-Z0-9]', '_', fac_clean)
+                                        safe_slot = re.sub(r'[^a-zA-Z0-9\+]', '_', selected_class['slot'])
+                                        
                                         # Use VTOP's native ZIP compilation endpoint
                                         url_suffix = f"academics/common/allCourseMeterialDownload/1/1/{target_sem}/{selected_class['class_id']}"
-                                        fname = f"{selected_code}_All_Materials"
+                                        fname = f"{selected_code}_all_{safe_slot}_{safe_fac}"
                                         
                                         if check_exists(fname):
                                             print(f"   {PEACH}[-] ZIP file already exists: {fname}")
