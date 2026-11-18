@@ -57,7 +57,7 @@ def check_dependencies():
 check_dependencies()
 init(autoreset=True) # Initialize Colors
 # --- Configuration ---
-CURRENT_VERSION = "v5.3.0"
+CURRENT_VERSION = "v5.3.1"
 
 def check_for_updates():
     cache_file = os.path.join("cache", "last_update.json")
