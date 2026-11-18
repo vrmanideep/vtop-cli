@@ -1,8 +1,28 @@
 import os
 import sys
 import subprocess
-
+import httpx
 import services
+import argparse
+import requests
+import asyncio
+import json
+import time
+import getpass
+import traceback
+import glob
+import re
+import math
+import shutil
+import zipfile
+from cryptography.fernet import Fernet
+from datetime import datetime
+from datetime import datetime as dt
+from datetime import datetime as dt_obj, timedelta
+from colorama import init, Fore, Back, Style
+from vitap_vtop_client.client import VtopClient
+from services import *
+
 
 # TrueColor (24-bit) RGB match for PowerShell's command yellow
 PEACH = '\033[38;2;245;231;158m'
@@ -35,90 +55,107 @@ def check_dependencies():
             sys.exit(1)
 
 check_dependencies()
-
-from colorama import init, Fore, Back, Style
 init(autoreset=True) # Initialize Colors
-
-import argparse
-import requests
-import asyncio
-import json
-import time
-import getpass
-import traceback
-import glob
-import re
-import math
-from datetime import datetime as dt 
-from vitap_vtop_client.client import VtopClient
-from services import *
-
 # --- Configuration ---
-CURRENT_VERSION = "5.2.1"
+CURRENT_VERSION = "v5.3.1"
 
 def check_for_updates():
-    import urllib.request
-    import json
-    import os
-    import sys
-    import time
-    import zipfile  
-    import io       
+    cache_file = os.path.join("cache", "last_update.json")
+    latest_version = None
+    needs_check = True
 
-    API_URL = "https://api.github.com/repos/vrmanideep/vtop-cli/releases/latest"
-    print(f"   {Fore.CYAN}[.] Checking for updates...", end="\r") 
-    
-    try:
-        req = urllib.request.Request(API_URL, headers={'User-Agent': 'vtop-updater'})
-        with urllib.request.urlopen(req, timeout=3) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            
-        tag_name = data['tag_name'] 
-        remote_version = tag_name.replace('v', '') 
-        changelog = data['body']
-        zipball_url = data['zipball_url'] 
+    # 1. Read Cached State (Remember the warning without hitting the network)
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                data = json.load(f)
+                if time.time() - data.get("last_checked", 0) < 86400:
+                    needs_check = False
+                    latest_version = data.get("latest_version")
+        except Exception:
+            pass
+
+    # 2. Network Check (Bypasses API limits via Web URL, no Git required)
+    if needs_check:
+        try:
+            # We follow the redirect of the 'latest' button on GitHub to get the tag name
+            resp = httpx.get("https://github.com/vrmanideep/vtop-cli/releases/latest", follow_redirects=True, timeout=5.0)
+            if resp.status_code == 200 and "/tag/" in str(resp.url):
+                latest_version = str(resp.url).split("/tag/")[-1].strip()
+                
+                # Save both the timestamp and the version we found
+                os.makedirs("cache", exist_ok=True)
+                with open(cache_file, "w") as f:
+                    json.dump({"last_checked": time.time(), "latest_version": latest_version}, f)
+        except Exception:
+            pass
+
+    # 3. Interactive Prompt & Auto-Update Execution
+    if latest_version and latest_version != CURRENT_VERSION:
+        print(f"\n   {Fore.YELLOW}[!] UPDATE AVAILABLE: {latest_version} (Current: {CURRENT_VERSION})")
+        choice = input(f"   {Fore.YELLOW}[>] Type 'update' to install now, or press [Enter] to skip: {Fore.WHITE}").strip().lower()
         
-        if remote_version != CURRENT_VERSION:
-            print(" " * 50, end="\r")
-            print(f"   {Fore.RED}[!] UPDATE AVAILABLE: v{CURRENT_VERSION} -> v{remote_version}")
-            print(f"\n{Fore.CYAN}--- Release Notes ---")
-            print(f"{Fore.WHITE}{changelog}")
-            print(f"{Fore.CYAN}---------------------\n")
-            
-            choice = input(f"   {PEACH}Download now? (y/n): {Fore.WHITE}").lower().strip()
-            if choice == 'y':
-                print(f"   {Fore.CYAN}[.] Downloading update via Zipball...", end="\r")
-                try:
-                    script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-                    zip_req = urllib.request.Request(zipball_url, headers={'User-Agent': 'vtop-updater'})
-                    with urllib.request.urlopen(zip_req, timeout=15) as response:
-                        zip_data = response.read()
+        if choice == 'update':
+            print(f"\n   {Fore.CYAN}[.] Downloading {latest_version} source files from GitHub...")
+            try:
+                zip_url = f"https://github.com/vrmanideep/vtop-cli/archive/refs/tags/{latest_version}.zip"
+                zip_path = os.path.join("cache", "update.zip")
+                
+                # Download ZIP payload
+                with open(zip_path, "wb") as f:
+                    f.write(httpx.get(zip_url, follow_redirects=True).content)
+                
+                print(f"   {Fore.CYAN}[.] Extracting and applying update in-place...")
+                extract_dir = os.path.join("cache", "update_extracted")
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                
+                # GitHub ZIPs extract into a single root folder (e.g., 'vtop-cli-5.3.0')
+                root_folder = os.listdir(extract_dir)[0]
+                source_dir = os.path.join(extract_dir, root_folder)
+                
+                # SAFE LIST: Never overwrite these files during an auto-update
+                protected = ["cache", "credentials.dat", "google_config", ".git", "vtop.bat"]
+                
+                for item in os.listdir(source_dir):
+                    if item in protected:
+                        continue
                         
-                    with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
-                        for file_info in z.infolist():
-                            if file_info.is_dir(): continue
-                            parts = file_info.filename.split('/', 1)
-                            if len(parts) > 1 and parts[1]:
-                                target_relative_path = parts[1]
-                                target_absolute_path = os.path.join(script_dir, target_relative_path)
-                                folder_name = os.path.dirname(target_absolute_path)
-                                if folder_name: os.makedirs(folder_name, exist_ok=True)
-                                with open(target_absolute_path, 'wb') as f_out:
-                                    f_out.write(z.read(file_info.filename))
-                                    
-                    print(f"\n   {Fore.GREEN}[✓] Update complete! Restarting...            \n")
-                    time.sleep(1.5) 
-                    sys.stdout.flush()
-                    os.system('cls' if os.name == 'nt' else 'clear')
-                    script_path = os.path.abspath(sys.argv[0])
-                    os.execv(sys.executable, [sys.executable, script_path] + sys.argv[1:])
+                    s = os.path.join(source_dir, item)
+                    d = os.path.join(os.getcwd(), item)
                     
-                except Exception as e:
-                    print(f"\n   {Fore.RED}[x] Failed to extract files: {e}")
-        else:
-            print(" " * 50, end="\r")
-    except Exception:
-        print(" " * 50, end="\r")
+                    if os.path.isdir(s):
+                        if os.path.exists(d): 
+                            shutil.rmtree(d) # Remove old module folders
+                        shutil.copytree(s, d)
+                    else:
+                        shutil.copy2(s, d)
+                        
+                # Cleanup temp files
+                shutil.rmtree(extract_dir)
+                os.remove(zip_path)
+                
+                # Auto-patch the version string in the newly downloaded script
+                try:
+                    with open(__file__, "r", encoding="utf-8") as f:
+                        script_content = f.read()
+                    script_content = re.sub(r'CURRENT_VERSION\s*=\s*".*?"', f'CURRENT_VERSION = "{latest_version}"', script_content)
+                    with open(__file__, "w", encoding="utf-8") as f:
+                        f.write(script_content)
+                except Exception:
+                    pass
+                
+                print(f"   {Fore.GREEN}[✓] Update applied successfully! Restarting CLI...\n")
+                time.sleep(1.5)
+                
+                # Safely chain the new process without dropping the PowerShell prompt
+                subprocess.call([sys.executable] + sys.argv)
+                sys.exit(0)
+                
+            except Exception as e:
+                print(f"   {Fore.RED}[x] Auto-update failed: {e}")
+                print(f"   {Fore.YELLOW}[>] Please download manually from GitHub.")
+                time.sleep(2)
 
 # --- Legacy Credential Cleanup ---
 if os.path.exists("credentials.txt"):
@@ -189,9 +226,9 @@ def print_grade_history(data):
     s = data.get("summary", {})
     print(f"   {PEACH}ACADEMIC STANDING (OVERALL)")
     print(f"   {Fore.CYAN}-------------------------------------------")
-    print(f"   {Fore.CYAN}CURRENT CGPA          : {Fore.GREEN}{Style.BRIGHT}{s.get('cgpa')}")
-    print(f"   {Fore.CYAN}CREDITS EARNED        : {Fore.WHITE}{s.get('earned')}")
-    print(f"   {Fore.CYAN}CREDITS REGISTERED    : {Fore.WHITE}{s.get('registered')}")
+    print(f"   {Fore.CYAN}CURRENT CGPA       : {Fore.GREEN}{Style.BRIGHT}{s.get('cgpa')}")
+    print(f"   {Fore.CYAN}CREDITS EARNED     : {Fore.WHITE}{s.get('earned')}")
+    print(f"   {Fore.CYAN}CREDITS REGISTERED : {Fore.WHITE}{s.get('registered')}")
     print(f"   {Fore.CYAN}-------------------------------------------\n")
 
 def print_timetable(data):
@@ -632,6 +669,7 @@ def printWeekendOuting(history):
 async def main():
     global asyncio
     setup_windows_search_shortcut()
+    check_for_updates()
     while True:
         reg_no, password = get_credentials("credentials.dat")
         print(f"\n{Fore.CYAN}[.] Connecting to V-TOP as {reg_no}...")
@@ -653,10 +691,8 @@ async def main():
                 
                 if action in ['EXIT', '0']:
                     print(f"{PEACH}Exiting... See you later!")
-                    import sys
                     sys.exit() 
                 elif action == 'WIPE':
-                    import os
                     if os.path.exists("credentials.dat"):
                         os.remove("credentials.dat")
                     print(f"{PEACH}[-] Trashed encrypted vault. Let's try again...\n")
@@ -668,7 +704,6 @@ async def main():
             
             for attempt in range(1, 4):
                 try:
-                    import httpx
                     content_resp = await client._client.get(
                         "https://vtop.vitap.ac.in/vtop/content?", 
                         timeout=25.0,
@@ -703,10 +738,6 @@ async def main():
             current_sem_name = available_sems[0]['name'] if available_sems else "None"
             
             if available_sems and len(available_sems) > 1:
-                import json
-                from datetime import datetime
-                import os
-                
                 try:
                     if os.path.exists("calendar_COMB_cache.json"):
                         with open("calendar_COMB_cache.json", "r", encoding="utf-8") as f:
@@ -796,8 +827,6 @@ async def main():
                         print(f"   {Fore.GREEN}    -> Marks Synced!       ")
 
                         print(f"\n   {Fore.GREEN}[✓] All data successfully synchronized!{Style.RESET_ALL}")
-                        
-                        import asyncio
                         await asyncio.sleep(1.5)
                         
                     except Exception as e:
@@ -902,7 +931,6 @@ async def main():
                                 
                                 if len(classes) == 1:
                                     selected_class = classes[0]
-                                    import re
                                     fac_clean = re.sub(r'^\d+\s*-\s*', '', selected_class['faculty'])
                                     print(f"   {Fore.GREEN}[+] Auto-selected: SLOT: {selected_class['slot']} | FAC: {fac_clean}")
                                 else:
@@ -911,7 +939,6 @@ async def main():
                                     print(f"   {Fore.CYAN}" + "-" * 60)
                                     
                                     current_slot = ""
-                                    import re
                                     for i, cls in enumerate(classes):
                                         if cls['slot'] != current_slot:
                                             if current_slot != "": print("")
@@ -956,9 +983,6 @@ async def main():
                                 )
                                 
                                 print_course_page_table(c_page)
-                                
-                                import os
-                                import glob
                                 home = os.path.expanduser("~")
                                 save_dir = os.path.join(home, "Downloads")
 
@@ -979,7 +1003,6 @@ async def main():
                                     def get_custom_date(date_str):
                                         if not date_str: return "UnknownDate"
                                         try:
-                                            from datetime import datetime
                                             # Converts VTOP's "12-Jul-2026" to "12-Jul-26"
                                             return datetime.strptime(date_str, "%d-%b-%Y").strftime("%d-%b-%y")
                                         except Exception:
@@ -1123,7 +1146,6 @@ async def main():
                         continue
                         
                     while True:
-                        import os
                         os.system('cls' if os.name == 'nt' else 'clear')
                         print_header("DIGITAL ASSIGNMENTS")
                         print(f"   {Fore.CYAN}{'#':<3} {'CODE':<10} {'COURSE TITLE':<40} {'FACULTY'}")
@@ -1253,7 +1275,6 @@ async def main():
                                         item = history[idx]
                                         if item['download_url']:
                                             print(f"   {Fore.CYAN}[.] Downloading...")
-                                            import os
                                             home = os.path.expanduser("~")
                                             download_folder = os.path.join(home, "Downloads")
                                             clean_date = item['out_date'].replace(" ", "-")
@@ -1372,8 +1393,7 @@ async def main():
                                 t_idx = input(f"   {PEACH}Choice: {Fore.WHITE}").strip()
                                 if t_idx == '0': continue
                                 out_t = times[int(t_idx) - 1]
-                                
-                                import re
+
                                 while True:
                                     contact = input(f"\n   {PEACH}Contact No (10 digits): {Fore.WHITE}").strip()
                                     if contact == '0': break
@@ -1416,7 +1436,6 @@ async def main():
                                     if 0 <= idx < len(history):
                                         selected_outing = history[idx]
                                         if selected_outing['download_link']:
-                                            import os
                                             save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
                                             fname = f"Outpass_{selected_outing['out_date']}_{selected_outing['place']}"
                                             print(f"   {Fore.CYAN}[.] Securing Outpass from VTOP servers...")
@@ -1428,7 +1447,6 @@ async def main():
                 elif choice == '12':
                     print_header("75% ATTENDANCE CALCULATOR")
                     try:
-                        import math
                         target = 75.0
                         present = int(input(f"   {PEACH}Classes Attended (Present): {Fore.WHITE}").strip())
                         total = int(input(f"   {PEACH}Total Classes Conducted:    {Fore.WHITE}").strip())
@@ -1477,30 +1495,22 @@ async def main():
                     new_user = input(f"   {PEACH}[>] Enter Login ID (Reg No, App No, or Email): {Fore.WHITE}").strip()
                     if '@' not in new_user:
                         new_user = new_user.upper()
-                        
-                    import pwinput
                     new_pass = pwinput.pwinput(prompt=f"   {PEACH}[>] Enter New VTOP Password: {Fore.WHITE}", mask="*").strip()
                     
                     if new_user and new_pass:
                         confirm = input(f"\n   {PEACH}Encrypt new credentials and restart? (y/n): {Fore.WHITE}").strip().lower()
                         if confirm == 'y':
-                            import json
-                            from cryptography.fernet import Fernet
+                            
                             key = get_encryption_key() # From services.py
                             cipher = Fernet(key)
                             data = json.dumps({"username": new_user, "password": new_pass}).encode('utf-8')
                             
                             with open("credentials.dat", "wb") as f:
                                 f.write(cipher.encrypt(data))
-                                
-                            import os
-                            import sys
                             print(f"   {Fore.GREEN}[✓] Vault updated successfully! Restarting...")
                             os.execv(sys.executable, ['python'] + sys.argv)
                 
                 elif choice == '16':
-                    import services
-                    
                     if not target_sem:
                         print(f"   {Fore.RED}[!] No semester selected. Use option 14.")
                         continue
@@ -1559,12 +1569,7 @@ async def main():
                         except ValueError:
                             print(f"   {Fore.RED}[!] Please enter a valid number.")
 
-                elif choice == '17': 
-                    import os
-                    from datetime import datetime as dt_obj, timedelta
-                    import services
-                    import asyncio
-
+                elif choice == '17':
                     print(f"\n   {PEACH}{Style.BRIGHT}[ ABSENCE PREDICTOR ]")
                     print(f"   {Fore.CYAN}[i] Simulate how skipping future classes affects your attendance.")
                     
@@ -1587,7 +1592,6 @@ async def main():
 
                             valid_dates = []
                             try:
-                                from services import parse_date
                                 segments = [s.strip() for s in absence_input.split(',')]
 
                                 for segment in segments:
@@ -1684,10 +1688,6 @@ async def main():
 
 
 def setup_windows_search_shortcut():
-    import os
-    import sys
-    import subprocess
-
     if os.name != 'nt':
         return 
 
@@ -1743,10 +1743,9 @@ $Shortcut.Save()
         print(f"\n   \033[31m[x] Exception creating shortcut: {e}\033[0m")
 
 if __name__ == "__main__":
-    #check_for_updates()
+    
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        import sys
         print(f"\r\033[K\n   {PEACH}[!] Exiting... (Force Quit){Style.RESET_ALL}\n")
         sys.exit(0)
