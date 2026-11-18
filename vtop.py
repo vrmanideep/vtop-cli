@@ -57,7 +57,7 @@ def check_dependencies():
 check_dependencies()
 init(autoreset=True) # Initialize Colors
 # --- Configuration ---
-CURRENT_VERSION = "v5.3.1"
+CURRENT_VERSION = "v5.3.0"
 
 def check_for_updates():
     cache_file = os.path.join("cache", "last_update.json")
@@ -419,12 +419,22 @@ def print_marks(data):
              continue
              
         first_line = True
+        t_score = t_max = t_wpct = t_wmrk = 0.0
+        
         for mark in details:
             m_title = mark.get('mark_title', '-')[:38] 
             score   = str(mark.get('scored_mark', '-'))
             max_m   = str(mark.get('max_mark', '-'))
             w_pct   = str(mark.get('weightage_pct', '-'))
             w_mrk   = str(mark.get('weightage_mark', '-'))
+            
+            # Accumulate totals
+            try:
+                if score not in ["ABSENT", "-"]: t_score += float(score)
+                if max_m != "-": t_max += float(max_m)
+                if w_pct != "-": t_wpct += float(w_pct)
+                if w_mrk != "-": t_wmrk += float(w_mrk)
+            except ValueError: pass
             
             s_color = Fore.RED if score == "ABSENT" else Fore.GREEN
             
@@ -433,7 +443,11 @@ def print_marks(data):
                 first_line = False
             else:
                 print(f"   {Fore.WHITE}{'':<10} {'':<60} {m_title:<40} {s_color}{score:<8} {Fore.WHITE}{max_m:<6} {w_pct:<6} {w_mrk}")
-                
+        
+        # Format totals (removes trailing .0 for clean display)
+        fs = lambda x: f"{x:.2f}".rstrip('0').rstrip('.') if x > 0 else "-"
+        
+        print(f"   {'':<10} {'':<60} {Fore.GREEN}{'TOTAL':<40} {fs(t_score):<8} {fs(t_max):<6} {fs(t_wpct):<6} {fs(t_wmrk)}")
         print(f"   {Fore.CYAN}" + "-" * 145)
 
 def print_exam_schedule(data):
